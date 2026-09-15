@@ -1,0 +1,39 @@
+[workspace]
+name = "edge-mppi"
+version = "0.1.0"
+description = "Real-time MPPI control, GPU-accelerated, on an embedded target"
+authors = ["Arthur Fournier <arthur.fou9@gmail.com>"]
+channels = ["conda-forge"]
+platforms = ["linux-64", "linux-aarch64"]
+
+[dependencies]
+python = "3.11.*"
+numpy = ">=1.26"
+scipy = ">=1.11"
+matplotlib = ">=3.8"
+pyyaml = ">=6.0"
+cmake = ">=3.24"
+ninja = ">=1.11"
+
+# CUDA toolkit on the dev PC only.
+# On the Jetson (linux-aarch64) CUDA is provided by JetPack at the system level.
+[target.linux-64.dependencies]
+cuda-toolkit = "12.*"
+
+[tasks]
+configure = "cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release"
+build = { cmd = "cmake --build build", depends-on = ["configure"] }
+clean = "rm -rf build"
+
+# Python reference simulation
+sim = "python python/run_sim.py --config config/mppi.yaml"
+
+# Latency sweep on the CUDA implementation
+bench = { cmd = "python bench/run_bench.py --config config/mppi.yaml", depends-on = [
+  "build",
+] }
+
+# Non-regression: per-trajectory costs, Python vs CUDA, on a fixed noise tensor
+check = { cmd = "python bench/check_parity.py --config config/mppi.yaml", depends-on = [
+  "build",
+] }

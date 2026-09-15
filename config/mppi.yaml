@@ -1,0 +1,43 @@
+# Single source of truth for both the Python reference and the C++/CUDA path.
+# SI units and radians everywhere. psi is measured from the x axis.
+# State order is fixed: [x, y, psi, v] kinematic, [x, y, psi, vx, vy, r] dynamic.
+
+model: kinematic          # kinematic | dynamic
+state_dim: 4              # 4 for kinematic, 6 for dynamic
+control_dim: 2            # [a, delta]
+
+mppi:
+  num_samples: 1024       # K, raised to 8192 once the CUDA path is validated
+  horizon: 30             # T, raised to 50
+  dt: 0.02
+  lambda: 1.0
+  noise_std: [0.5, 0.1]   # [a, delta]
+  seed: 0                 # fixed noise for the parity check
+
+control_bounds:
+  a_min: -4.0
+  a_max: 4.0
+  delta_min: -0.4
+  delta_max: 0.4
+
+vehicle:                  # F1TENTH parameters
+  wheelbase: 0.33
+  lf: 0.15
+  lr: 0.18
+  mass: 3.5
+  izz: 0.04
+  cornering_stiffness_front: 4.0
+  cornering_stiffness_rear: 4.2
+  kinematic_blend_speed: 1.5
+
+cost:
+  w_lateral: 1.0
+  w_progress: 1.0
+  w_offtrack: 100.0
+  w_control: 0.01
+  track_half_width: 0.8
+
+track:
+  grid_resolution: 0.05
+  npy_path: results/track/costmap.npy
+  bin_path: results/track/costmap.bin
