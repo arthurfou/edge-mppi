@@ -2,7 +2,7 @@
 name = "edge-mppi"
 version = "0.1.0"
 description = "Real-time MPPI control, GPU-accelerated, on an embedded target"
-authors = ["Arthur Fournier <arthur.fou9@gmail.com>"]
+authors = ["arthurfou"]
 channels = ["conda-forge"]
 platforms = ["linux-64", "linux-aarch64"]
 
