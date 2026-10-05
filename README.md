@@ -1,6 +1,6 @@
 # edge-mppi
 
-[![tests](https://github.com/arthurfou/edge-mppi/actions/workflows/tests.yml/badge.svg)](https://github.com/arthurfou/edge-mppi/actions/workflows/tests.yml)
+[![tests](https://github.com/arthurfou/edge-mppi/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/arthurfou/edge-mppi/actions/workflows/tests.yml?query=branch%3Amain)
 
 Real-time model predictive control, GPU-accelerated, on an embedded target.
 

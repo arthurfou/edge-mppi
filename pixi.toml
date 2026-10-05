@@ -18,8 +18,12 @@ pytest = ">=9.1.1,<10"
 
 # CUDA toolkit on the dev PC only.
 # On the Jetson (linux-aarch64) CUDA is provided by JetPack at the system level.
-[target.linux-64.dependencies]
+[feature.cuda.target.linux-64.dependencies]
 cuda-toolkit = "12.*"
+
+[environments]
+default = { features = ["cuda"], solve-group = "default" }
+test = { features = [], solve-group = "default" }
 
 [tasks]
 configure = "cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release"
