@@ -10,8 +10,7 @@ mppi:
   num_samples: 1024       # K, raised to 8192 once the CUDA path is validated
   horizon: 30             # T, raised to 50
   dt: 0.02
-  lambda: 0.3             # était 1.0, voir partie G
-  gamma: 0.0              # poids du terme de correction, théorie §4.5
+  lambda: 1.0
   noise_std: [0.5, 0.1]   # [a, delta]
   seed: 0                 # fixed noise for the parity check
 
@@ -25,8 +24,6 @@ vehicle:                  # F1TENTH parameters
   wheelbase: 0.33
   lf: 0.15
   lr: 0.18
-  width: 0.30             # largeur hors tout, pour la marge de sortie de piste
-  mu: 1.0                 # coefficient d'adhérence, pour le terme d'adhérence
   mass: 3.5
   izz: 0.04
   cornering_stiffness_front: 4.0
@@ -35,22 +32,12 @@ vehicle:                  # F1TENTH parameters
 
 cost:
   w_lateral: 1.0
-  w_progress: 10.0        # était 1.0
+  w_progress: 1.0
   w_offtrack: 100.0
   w_control: 0.01
-  w_adhesion: 10.0
-  w_speed: 1.0
-  lateral_scale: 0.4      # d0 (m)
-  speed_scale: 1.0        # v0 (m/s)
-  v_ref: 3.0              # vitesse de référence (m/s)
   track_half_width: 0.8
 
 track:
   grid_resolution: 0.05
-  resample_step: 0.05     # pas de rééchantillonnage de la ligne centrale (m)
-  margin: 1.0             # marge de la grille au-delà du bord de piste (m)
-  npz_path: results/track/costmap.npz   # était costmap.npy, voir Q-A2
+  npy_path: results/track/costmap.npy
   bin_path: results/track/costmap.bin
-
-sim:
-  max_steps: 3000         # 60 s à 50 Hz

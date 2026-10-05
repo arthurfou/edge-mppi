@@ -14,6 +14,7 @@ matplotlib = ">=3.8"
 pyyaml = ">=6.0"
 cmake = ">=3.24"
 ninja = ">=1.11"
+pytest = ">=9.1.1,<10"
 
 # CUDA toolkit on the dev PC only.
 # On the Jetson (linux-aarch64) CUDA is provided by JetPack at the system level.
@@ -25,9 +26,6 @@ configure = "cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release"
 build = { cmd = "cmake --build build", depends-on = ["configure"] }
 clean = "rm -rf build"
 
-# Python reference simulation
-sim = "python python/run_sim.py --config config/mppi.yaml"
-
 # Latency sweep on the CUDA implementation
 bench = { cmd = "python bench/run_bench.py --config config/mppi.yaml", depends-on = [
   "build",
@@ -37,3 +35,9 @@ bench = { cmd = "python bench/run_bench.py --config config/mppi.yaml", depends-o
 check = { cmd = "python bench/check_parity.py --config config/mppi.yaml", depends-on = [
   "build",
 ] }
+
+# STEP 1
+track = "python python/generate_track.py --config config/mppi.yaml"
+test = { cmd = "pytest -q python/tests", env = { PYTHONPATH = "python" } }
+sim = { cmd = "python python/run_sim.py --config config/mppi.yaml", depends-on = ["track"] }
+
