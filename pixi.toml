@@ -44,4 +44,5 @@ check = { cmd = "python bench/check_parity.py --config config/mppi.yaml", depend
 track = "python python/generate_track.py --config config/mppi.yaml"
 test = { cmd = "pytest -q python/tests", env = { PYTHONPATH = "python" } }
 sim = { cmd = "python python/run_sim.py --config config/mppi.yaml", depends-on = ["track"] }
+sweep = { cmd = "python bench/sweep.py", depends-on = ["track"] }
 

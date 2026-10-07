@@ -59,7 +59,7 @@ def simulate(cfg: Config, track: trk.Track) -> SimLog:
 
         states.append(x); controls.append(u); nexts.append(x_next)
         ess.append(info["ess"]); rho.append(info["rho"]); d_log.append(float(d))
-        if beam is None and progress >= BEAM_PROGRESS:
+        if beam is None and progress >= BEAM_PROGRESS:  # We take a picture for the plot once
             beam = (info["X"], info["w"])
 
         x = x_next
