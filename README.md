@@ -50,7 +50,7 @@ against it.
 ## Status
 
 - [ ] Step 0 - Repo foundations, CMake, shared YAML config
-- [ ] Step 1 - Kinematic MPPI in Python/NumPy
+- [x] Step 1 - Kinematic MPPI in Python/NumPy
 - [ ] Step 2 - Dynamic bicycle model with tire model
 - [ ] Step 3 - Naive CUDA port, validated against NumPy on fixed noise
 - [ ] Step 4 - Kernel optimization and Nsight profiling
