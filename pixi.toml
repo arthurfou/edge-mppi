@@ -46,3 +46,9 @@ test = { cmd = "pytest -q python/tests", env = { PYTHONPATH = "python" }, depend
 sim = { cmd = "python python/run_sim.py --config config/mppi.yaml", depends-on = ["track"] }
 sweep = { cmd = "python bench/sweep.py", depends-on = ["track"] }
 
+# STEP 2
+compare = { cmd = "python bench/compare_models.py", depends-on = ["track"] }
+tires = "python bench/plot_tires.py"
+all = [{ task = "track" }, { task = "sim" }, { task = "sweep" }, { task = "compare" }, { task = "tires" }]
+# De manière équivalente : 
+# all = { depends-on = ["track", "sim", "sweep", "compare", "tires"] }

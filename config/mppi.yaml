@@ -29,9 +29,13 @@ vehicle:                  # F1TENTH parameters
   mu: 1.0                 # coefficient d'adhérence, pour le terme d'adhérence
   mass: 3.5
   izz: 0.04
-  cornering_stiffness_front: 4.0
+  cornering_stiffness_front: 4.0   # C_S (1/rad) : F_y = mu * C_S * F_z * alpha, convention CommonRoad
   cornering_stiffness_rear: 4.2
-  kinematic_blend_speed: 1.5
+  tire_model: pacejka     # linear | tanh | pacejka
+  pacejka_c: 1.5          # forme ; B = C_S / C (pente à l'origine identique au linéaire)
+  pacejka_e: 0.0
+  blend_speed_low: 1.0    # m/s : cinématique pur en dessous (remplace kinematic_blend_speed)
+  blend_speed_high: 1.5   # m/s : dynamique pur au-dessus
 
 cost:
   w_lateral: 1.0

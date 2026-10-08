@@ -12,6 +12,7 @@ import numpy as np
 import yaml
 
 STATE_DIM = {"kinematic": 4, "dynamic": 6}
+TIRE_MODELS = ("linear", "tanh", "pacejka")
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,15 @@ class Vehicle:
     lr: float
     width: float
     mu: float
+    mass: float      # kg
+    izz: float       # kg·m², inertie de lacet
+    cornering_stiffness_front: float   # C_S, 1/rad, normalisée par la charge (partie C)
+    cornering_stiffness_rear: float
+    tire_model: str                    # linear | tanh | pacejka
+    pacejka_c: float
+    pacejka_e: float
+    blend_speed_low: float             # m/s, cinématique pur en dessous
+    blend_speed_high: float            # m/s, dynamique pur au-dessus
 
 
 @dataclass(frozen=True)
@@ -108,6 +118,10 @@ def load_config(path) -> Config:
         raise ValueError(
             f"lf + lr = {v['lf'] + v['lr']} but wheelbase = {v['wheelbase']}"
         )
+    if v["tire_model"] not in TIRE_MODELS:
+        raise ValueError(f"tire_model={v['tire_model']!r}, expected one of {TIRE_MODELS}")
+    if not 0.0 < v["blend_speed_low"] < v["blend_speed_high"]:
+        raise ValueError("need 0 < blend_speed_low < blend_speed_high")
 
     b = raw["control_bounds"]
     u_min = _readonly([b["a_min"], b["delta_min"]])
@@ -140,6 +154,15 @@ def load_config(path) -> Config:
             lr=v["lr"],
             width=v["width"],
             mu=v["mu"],
+            mass=v["mass"],
+            izz=v["izz"],
+            cornering_stiffness_front=v["cornering_stiffness_front"],
+            cornering_stiffness_rear=v["cornering_stiffness_rear"],
+            tire_model=v["tire_model"],
+            pacejka_c=v["pacejka_c"],
+            pacejka_e=v["pacejka_e"],
+            blend_speed_low=v["blend_speed_low"],
+            blend_speed_high=v["blend_speed_high"],
         ),
         cost=CostParams(**raw["cost"]),   # YAML keys match the field names exactly
         track=TrackParams(

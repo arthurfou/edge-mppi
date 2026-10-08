@@ -39,3 +39,112 @@ def step(state: np.ndarray, control: np.ndarray, dt: float, vehicle: Vehicle) ->
     v_next   = np.maximum(v + a * dt, 0.0)   # la voiture ne recule jamais
 
     return np.stack([x_next, y_next, psi_next, v_next], axis=-1)
+
+
+# ---------------------------------------------------------------------------
+# Modèle dynamique, état [x, y, psi, vx, vy, r]
+# ---------------------------------------------------------------------------
+
+G = 9.81   # m/s²
+
+
+def axle_loads(vehicle: Vehicle) -> tuple[float, float]:
+    """Static vertical loads (N) on the front and rear axles, no load transfer."""
+    m, L = vehicle.mass, vehicle.wheelbase
+    return m * G * vehicle.lr / L, m * G * vehicle.lf / L
+
+
+def tire_force(alpha: np.ndarray, fz: float, c_s: float, vehicle: Vehicle) -> np.ndarray:
+    """Lateral force (N) of one axle for a slip angle alpha (rad).
+
+    All three models have the same slope at the origin, mu * c_s * fz (N/rad),
+    and the two saturating ones peak at mu * fz.
+    """
+    mu = vehicle.mu
+    if vehicle.tire_model == "linear":       # choix statique, pas une branche sur l'état
+        return mu * c_s * fz * alpha
+    if vehicle.tire_model == "tanh":
+        return mu * fz * np.tanh(c_s * alpha)
+    # Pacejka simplifié, B choisi pour que la pente à l'origine soit B*C*D = mu*c_s*fz
+    c, e = vehicle.pacejka_c, vehicle.pacejka_e
+    b_alpha = c_s / c * alpha
+    return mu * fz * np.sin(c * np.arctan(b_alpha - e * (b_alpha - np.arctan(b_alpha))))
+
+
+def slip_angles(state: np.ndarray, delta: np.ndarray, vehicle: Vehicle) -> tuple[np.ndarray, np.ndarray]:
+    """Front and rear slip angles (rad). > 0 produces a force towards +y (left).
+
+    vx is floored at blend_speed_low in the denominator: the result stays finite
+    at vx = 0, where the blend gives this model a zero weight (0 * NaN = NaN).
+    """
+    vx, vy, r = state[..., 3], state[..., 4], state[..., 5]
+    vx_safe = np.maximum(vx, vehicle.blend_speed_low)
+    alpha_f = delta - np.arctan((vy + vehicle.lf * r) / vx_safe)
+    alpha_r = -np.arctan((vy - vehicle.lr * r) / vx_safe)
+    return alpha_f, alpha_r
+
+
+def dynamic_derivative(state: np.ndarray, a: np.ndarray, delta: np.ndarray, vehicle: Vehicle) -> np.ndarray:
+    """d(state)/dt of the dynamic single-track model, (..., 6) -> (..., 6). Theory 6.3."""
+    psi, vx, vy, r = state[..., 2], state[..., 3], state[..., 4], state[..., 5]
+    m, iz, lf, lr = vehicle.mass, vehicle.izz, vehicle.lf, vehicle.lr
+    fzf, fzr = axle_loads(vehicle)
+
+    alpha_f, alpha_r = slip_angles(state, delta, vehicle)
+    fyf = tire_force(alpha_f, fzf, vehicle.cornering_stiffness_front, vehicle)
+    fyr = tire_force(alpha_r, fzr, vehicle.cornering_stiffness_rear, vehicle)
+    cos_d, sin_d = np.cos(delta), np.sin(delta)
+    cos_p, sin_p = np.cos(psi), np.sin(psi)
+
+    return np.stack([
+        vx * cos_p - vy * sin_p,                    # vitesse du CdG dans le repère monde
+        vx * sin_p + vy * cos_p,
+        r,
+        a - fyf * sin_d / m + vy * r,               # + vy*r, -vx*r : repère tournant
+        (fyf * cos_d + fyr) / m - vx * r,
+        (lf * fyf * cos_d - lr * fyr) / iz,
+    ], axis=-1)
+
+
+def step_dynamic_only(state: np.ndarray, control: np.ndarray, dt: float, vehicle: Vehicle) -> np.ndarray:
+    """One control interval of the pure dynamic model.
+
+    Provisional: one explicit Euler step. Part E measures and picks the integrator.
+    """
+    a, delta = control[..., 0], control[..., 1]
+    return state + dt * dynamic_derivative(state, a, delta, vehicle)
+
+
+def step_kinematic6(state: np.ndarray, control: np.ndarray, dt: float, vehicle: Vehicle) -> np.ndarray:
+    """Kinematic bicycle in the 6-component state, explicit Euler.
+
+    Positions and heading move with the no-slip velocities, then (vy, r) are
+    put back on the kinematic manifold for the new vx (theory 6.5).
+    """
+    x, y, psi, vx = state[..., 0], state[..., 1], state[..., 2], state[..., 3]
+    a, delta = control[..., 0], control[..., 1]
+    k_vy = vehicle.lr / vehicle.wheelbase * np.tan(delta)   # vy = k_vy * vx
+    k_r = np.tan(delta) / vehicle.wheelbase                 # r  = k_r  * vx
+
+    vy = k_vy * vx
+    x_next = x + (vx * np.cos(psi) - vy * np.sin(psi)) * dt
+    y_next = y + (vx * np.sin(psi) + vy * np.cos(psi)) * dt
+    psi_next = psi + k_r * vx * dt
+    vx_next = np.maximum(vx + a * dt, 0.0)
+    return np.stack([x_next, y_next, psi_next, vx_next, k_vy * vx_next, k_r * vx_next], axis=-1)
+
+
+def blend_weight(vx: np.ndarray, vehicle: Vehicle) -> np.ndarray:
+    """kappa = 0 below blend_speed_low (kinematic), 1 above blend_speed_high (dynamic)."""
+    lo, hi = vehicle.blend_speed_low, vehicle.blend_speed_high
+    return np.clip((vx - lo) / (hi - lo), 0.0, 1.0)
+
+
+def step_dynamic(state: np.ndarray, control: np.ndarray, dt: float, vehicle: Vehicle) -> np.ndarray:
+    """state (..., 6), control (..., 2) -> (..., 6). Dynamic model blended with the kinematic one."""
+    kappa = blend_weight(state[..., 3], vehicle)[..., None]
+    dyn = step_dynamic_only(state, control, dt, vehicle)
+    kin = step_kinematic6(state, control, dt, vehicle)
+    nxt = kappa * dyn + (1.0 - kappa) * kin           # les deux sont toujours évalués
+    vx_next = np.maximum(nxt[..., 3], 0.0)            # pas de marche arrière
+    return np.concatenate([nxt[..., :3], vx_next[..., None], nxt[..., 4:]], axis=-1)
