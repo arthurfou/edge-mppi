@@ -13,6 +13,7 @@ import yaml
 
 STATE_DIM = {"kinematic": 4, "dynamic": 6}
 TIRE_MODELS = ("linear", "tanh", "pacejka")
+INTEGRATORS = ("euler", "rk4")
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,8 @@ class Vehicle:
     pacejka_e: float
     blend_speed_low: float             # m/s, cinématique pur en dessous
     blend_speed_high: float            # m/s, dynamique pur au-dessus
+    integrator: str                    # euler | rk4, pour la partie dynamique
+    substeps: int                      # sous-pas par intervalle de commande
 
 
 @dataclass(frozen=True)
@@ -122,6 +125,10 @@ def load_config(path) -> Config:
         raise ValueError(f"tire_model={v['tire_model']!r}, expected one of {TIRE_MODELS}")
     if not 0.0 < v["blend_speed_low"] < v["blend_speed_high"]:
         raise ValueError("need 0 < blend_speed_low < blend_speed_high")
+    if v["integrator"] not in INTEGRATORS:
+        raise ValueError(f"integrator={v['integrator']!r}, expected one of {INTEGRATORS}")
+    if not (isinstance(v["substeps"], int) and v["substeps"] >= 1):
+        raise ValueError(f"substeps must be an integer >= 1, got {v['substeps']!r}")
 
     b = raw["control_bounds"]
     u_min = _readonly([b["a_min"], b["delta_min"]])
@@ -148,22 +155,7 @@ def load_config(path) -> Config:
             seed=m["seed"],
         ),
         bounds=Bounds(u_min=u_min, u_max=u_max),
-        vehicle=Vehicle(
-            wheelbase=v["wheelbase"],
-            lf=v["lf"],
-            lr=v["lr"],
-            width=v["width"],
-            mu=v["mu"],
-            mass=v["mass"],
-            izz=v["izz"],
-            cornering_stiffness_front=v["cornering_stiffness_front"],
-            cornering_stiffness_rear=v["cornering_stiffness_rear"],
-            tire_model=v["tire_model"],
-            pacejka_c=v["pacejka_c"],
-            pacejka_e=v["pacejka_e"],
-            blend_speed_low=v["blend_speed_low"],
-            blend_speed_high=v["blend_speed_high"],
-        ),
+        vehicle=Vehicle(**v),            # YAML keys match the field names exactly
         cost=CostParams(**raw["cost"]),   # YAML keys match the field names exactly
         track=TrackParams(
             grid_resolution=t["grid_resolution"],

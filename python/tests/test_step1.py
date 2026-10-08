@@ -1,15 +1,18 @@
+import dataclasses
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from mppi import track as trk
-from mppi.config import load_config
+from mppi.config import STATE_DIM, load_config
 from mppi.controller import MPPI, S_MAX, rollout_costs
 from mppi.cost import G, stage_cost, terminal_cost
 from mppi.dynamics import step
 
-CFG = load_config(Path(__file__).resolve().parents[2] / "config" / "mppi.yaml")
+# Le YAML est passé en dynamique à l'étape 2 : ces tests gardent le cinématique
+CFG = dataclasses.replace(load_config(Path(__file__).resolve().parents[2] / "config" / "mppi.yaml"),
+                          model="kinematic", state_dim=STATE_DIM["kinematic"])
 VEH = CFG.vehicle
 
 

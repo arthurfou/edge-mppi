@@ -2,15 +2,15 @@
 # SI units and radians everywhere. psi is measured from the x axis.
 # State order is fixed: [x, y, psi, v] kinematic, [x, y, psi, vx, vy, r] dynamic.
 
-model: kinematic          # kinematic | dynamic
-state_dim: 4              # 4 for kinematic, 6 for dynamic
+model: dynamic            # kinematic | dynamic (modèle des rollouts ; le véhicule simulé est toujours dynamique)
+state_dim: 6              # 4 for kinematic, 6 for dynamic
 control_dim: 2            # [a, delta]
 
 mppi:
   num_samples: 1024       # K, raised to 8192 once the CUDA path is validated
   horizon: 30             # T, raised to 50
   dt: 0.02
-  lambda: 0.3             # était 1.0, voir partie G
+  lambda: 3.0             # était 0.3 (étape 1), re-réglé en partie G
   gamma: 0.0              # poids du terme de correction, théorie §4.5
   noise_std: [0.5, 0.1]   # [a, delta]
   seed: 0                 # fixed noise for the parity check
@@ -26,7 +26,7 @@ vehicle:                  # F1TENTH parameters
   lf: 0.15
   lr: 0.18
   width: 0.30             # largeur hors tout, pour la marge de sortie de piste
-  mu: 1.0                 # coefficient d'adhérence, pour le terme d'adhérence
+  mu: 1.0                 # coefficient d'adhérence : pneus (dynamique) et terme d'adhérence (cinématique)
   mass: 3.5
   izz: 0.04
   cornering_stiffness_front: 4.0   # C_S (1/rad) : F_y = mu * C_S * F_z * alpha, convention CommonRoad
@@ -36,17 +36,19 @@ vehicle:                  # F1TENTH parameters
   pacejka_e: 0.0
   blend_speed_low: 1.0    # m/s : cinématique pur en dessous (remplace kinematic_blend_speed)
   blend_speed_high: 1.5   # m/s : dynamique pur au-dessus
+  integrator: rk4         # euler | rk4, partie dynamique seulement
+  substeps: 1             # sous-pas par intervalle dt
 
 cost:
   w_lateral: 1.0
   w_progress: 10.0        # était 1.0
   w_offtrack: 100.0
   w_control: 0.01
-  w_adhesion: 10.0
+  w_adhesion: 10.0        # utilisé seulement par le modèle cinématique
   w_speed: 1.0
   lateral_scale: 0.4      # d0 (m)
   speed_scale: 1.0        # v0 (m/s)
-  v_ref: 3.0              # vitesse de référence (m/s)
+  v_ref: 7.0              # vitesse de référence (m/s), était 3.0, voir partie G
   track_half_width: 0.8
 
 track:

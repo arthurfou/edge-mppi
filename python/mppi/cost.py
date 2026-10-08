@@ -1,7 +1,8 @@
 """Per-trajectory cost.
 
 Terms: lateral offset to the centerline, curvilinear progress, off-track
-penalty, control regularization.
+penalty, speed tracking, control regularization, and an adhesion penalty for
+the kinematic model only.
 
 Each term is normalized to the same order of magnitude. Without that, tuning
 lambda against the cost scale is guesswork.
@@ -17,12 +18,12 @@ G = 9.81   # m/s², pour la limite d'adhérence mu*g
 def stage_cost(state: np.ndarray, control: np.ndarray, track: Track, cfg: Config) -> np.ndarray:
     """Running cost of x_t and of the control u_{t-1} that led to it.
 
-    state (..., 4), control (..., 2) -> (...,). Vectorized over leading axes,
+    state (..., state_dim), control (..., 2) -> (...,). Vectorized over leading axes,
     typically K.
     """
     c, veh, u_max = cfg.cost, cfg.vehicle, cfg.bounds.u_max
     d, _ = lookup(track, state[..., 0], state[..., 1])   # s inutile ici
-    v = state[..., 3]
+    v = state[..., 3]   # v (cinématique) ou vx (dynamique) : même indice
 
     # Écart latéral, normalisé par d0 : vaut 1 à 0,4 m de la ligne centrale
     d0 = c.lateral_scale
@@ -39,15 +40,18 @@ def stage_cost(state: np.ndarray, control: np.ndarray, track: Track, cfg: Config
     # Bornes symétriques : u_max sert d'échelle pour a et pour delta
     effort = c.w_control * ((control / u_max) ** 2).sum(axis=-1)
 
-    # Accélération latérale du modèle cinématique, pénalisée au-delà de mu*g (Q-D4)
-    a_lat = v**2 * np.abs(np.tan(control[..., 1])) / veh.wheelbase
-    adhesion = c.w_adhesion * np.maximum(0.0, a_lat / (veh.mu * G) - 1.0) ** 2
-
-    return lateral + offtrack + speed + effort + adhesion
+    cost = lateral + offtrack + speed + effort
+    if cfg.model == "kinematic":   # choix statique (config), pas une branche sur l'état
+        # Rustine du cinématique, qui n'a pas de limite d'adhérence (Q-D4 de l'étape 1) :
+        # accélération latérale cinématique, pénalisée au-delà de mu*g.
+        # Le modèle dynamique sature ses pneus lui-même : terme supprimé.
+        a_lat = v**2 * np.abs(np.tan(control[..., 1])) / veh.wheelbase
+        cost = cost + c.w_adhesion * np.maximum(0.0, a_lat / (veh.mu * G) - 1.0) ** 2
+    return cost
 
 
 def terminal_cost(state_T: np.ndarray, s0: float, track: Track, cfg: Config) -> np.ndarray:
-    """Progress reward on the last state x_T. state_T (..., 4) -> (...,).
+    """Progress reward on the last state x_T. state_T (..., state_dim) -> (...,).
 
     s0 is the progress of the rollout start x0, shared by all K rollouts.
     Normalized by the distance covered at v_ref over the horizon: ~ -w_progress

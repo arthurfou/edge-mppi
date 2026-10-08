@@ -103,3 +103,10 @@ pixi run check
 
 On the Jetson, CUDA comes from JetPack at the system level. Pixi does not
 install a CUDA toolkit on `linux-aarch64`.
+
+```
+pixi run sim                      # modèle du YAML (dynamic)
+pixi run sim --model kinematic    # pixi transmet bien l'option, vérifié
+pixi run sim-kin                  # raccourci du précédent
+pixi run sim-both                 # dynamique puis cinématique, à la suite
+```

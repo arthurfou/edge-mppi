@@ -43,11 +43,15 @@ check = { cmd = "python bench/check_parity.py --config config/mppi.yaml", depend
 # STEP 1
 track = "python python/generate_track.py --config config/mppi.yaml"
 test = { cmd = "pytest -q python/tests", env = { PYTHONPATH = "python" }, depends-on = ["track"] }
-sim = { cmd = "python python/run_sim.py --config config/mppi.yaml", depends-on = ["track"] }
+sim = { cmd = "python python/run_sim.py --config config/mppi.yaml --model {{ model }}",
+        args = [{ arg = "model", default = "dynamic" }], 
+        depends-on = ["track"] }
 sweep = { cmd = "python bench/sweep.py", depends-on = ["track"] }
 
 # STEP 2
 compare = { cmd = "python bench/compare_models.py", depends-on = ["track"] }
+sim-kin = { cmd = "python python/run_sim.py --config config/mppi.yaml --model kinematic", depends-on = ["track"] }
+sim-both = { cmd = "python python/run_sim.py --config config/mppi.yaml --model both", depends-on = ["track"] }
 tires = "python bench/plot_tires.py"
 all = [{ task = "track" }, { task = "sim" }, { task = "sweep" }, { task = "compare" }, { task = "tires" }]
 # De manière équivalente : 

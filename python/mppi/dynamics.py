@@ -14,7 +14,8 @@ Public interface, mirrored by dynamics.cuh as a __device__ function:
 
     step(state, control, dt, vehicle) -> state
 
-state_dim comes from the config. It is never written as a literal.
+The model is chosen by the state size (kinematic 4, dynamic 6), taken from
+STATE_DIM in config.py. It is never written as a literal.
 
 Project choice: the vehicle never reverses, v_next = max(v + a*dt, 0).
 The CUDA kernel must do the same. Controls are not clipped here, the
@@ -22,10 +23,25 @@ controller applies the bounds.
 """
 import numpy as np
 
-from .config import Vehicle
+from .config import STATE_DIM, Vehicle
 
 
 def step(state: np.ndarray, control: np.ndarray, dt: float, vehicle: Vehicle) -> np.ndarray:
+    """Model chosen by the state size: kinematic (4) or dynamic (6).
+
+    The size is fixed by the config for a whole run, not by the state values:
+    a static choice, not a branch on the state.
+    """
+    if state.shape[-1] == STATE_DIM["dynamic"]:
+        return step_dynamic(state, control, dt, vehicle)
+    return step_kinematic(state, control, dt, vehicle)
+
+
+# ---------------------------------------------------------------------------
+# Modèle cinématique, état [x, y, psi, v] (étape 1, inchangé)
+# ---------------------------------------------------------------------------
+
+def step_kinematic(state: np.ndarray, control: np.ndarray, dt: float, vehicle: Vehicle) -> np.ndarray:
     """state (..., 4), control (..., 2) -> (..., 4). Vectorized over leading axes."""
     x, y, psi, v = state[..., 0], state[..., 1], state[..., 2], state[..., 3]
     a, delta = control[..., 0], control[..., 1]
@@ -107,12 +123,20 @@ def dynamic_derivative(state: np.ndarray, a: np.ndarray, delta: np.ndarray, vehi
 
 
 def step_dynamic_only(state: np.ndarray, control: np.ndarray, dt: float, vehicle: Vehicle) -> np.ndarray:
-    """One control interval of the pure dynamic model.
-
-    Provisional: one explicit Euler step. Part E measures and picks the integrator.
-    """
+    """One control interval of the pure dynamic model: `substeps` RK4 or Euler sub-steps."""
     a, delta = control[..., 0], control[..., 1]
-    return state + dt * dynamic_derivative(state, a, delta, vehicle)
+    h = dt / vehicle.substeps
+    f = lambda s: dynamic_derivative(s, a, delta, vehicle)
+    for _ in range(vehicle.substeps):              # nombre fixe : boucle déroulable en CUDA
+        if vehicle.integrator == "euler":
+            state = state + h * f(state)
+        else:                                      # rk4
+            k1 = f(state)
+            k2 = f(state + 0.5 * h * k1)
+            k3 = f(state + 0.5 * h * k2)
+            k4 = f(state + h * k3)
+            state = state + h / 6.0 * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+    return state
 
 
 def step_kinematic6(state: np.ndarray, control: np.ndarray, dt: float, vehicle: Vehicle) -> np.ndarray:
