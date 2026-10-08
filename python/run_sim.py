@@ -4,11 +4,13 @@ From step 2 on, the simulated vehicle (the "plant") is always the dynamic
 model. The controller rolls out the model named in the config: dynamic
 (perfect model) or kinematic (model mismatch, theory 7.9).
 
-Writes the trajectory plot and the time series to results/figures/, and the
-(state, control, next_state) triplets of the plant to results/trajectories/.
+Writes the trajectory plot and the time series to results/figures/, the
+(state, control, next_state) triplets of the plant to results/trajectories/,
+and the summary to results/logs/ (Markdown + JSON).
 """
 import argparse
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -21,6 +23,8 @@ from mppi import track as trk
 from mppi.config import STATE_DIM, Config, Vehicle, load_config
 from mppi.controller import MPPI
 from mppi.dynamics import G, axle_loads, slip_angles, step_dynamic, tire_force
+import report
+from report import cell
 
 BEAM_PROGRESS = 12.0   # m : on photographie le faisceau à l'entrée du premier virage
 BEAM_SIZE = 200        # nombre de rollouts tracés, les plus lourds
@@ -37,6 +41,7 @@ class SimLog:
     t_iter: np.ndarray       # (N,)    durée de command(), en secondes
     progress: float          # distance parcourue le long de la piste (m)
     beam: tuple[np.ndarray, np.ndarray] | None   # (X, w) d'une itération, pour la figure
+    plant: Vehicle           # paramètres du véhicule simulé (peuvent différer de cfg.vehicle)
 
 
 def observe(x: np.ndarray, cfg: Config) -> np.ndarray:
@@ -49,11 +54,13 @@ def observe(x: np.ndarray, cfg: Config) -> np.ndarray:
     return np.array([x[0], x[1], x[2], np.hypot(x[3], x[4])])
 
 
-def simulate(cfg: Config, track: trk.Track, plant: Vehicle | None = None) -> SimLog:
+def simulate(cfg: Config, track: trk.Track, plant: Vehicle | None = None,
+             on_step: Callable[[float], None] | None = None) -> SimLog:
     """Runs MPPI in closed loop from a standstill on the start line, until one lap or max_steps.
 
     plant: parameters of the simulated vehicle, cfg.vehicle by default (perfect
     model). Passing other ones simulates a model error (part H).
+    on_step: called with the progress (m) after each step, for a progress bar.
     """
     plant = cfg.vehicle if plant is None else plant
     x = np.array([*track.centerline[0], track.heading[0], 0.0, 0.0, 0.0])
@@ -82,16 +89,22 @@ def simulate(cfg: Config, track: trk.Track, plant: Vehicle | None = None) -> Sim
             beam = (info["X"], info["w"])
 
         x = x_next
+        if on_step is not None:
+            on_step(progress)
         if progress >= track.length or not np.all(np.isfinite(x)):
             break
 
     return SimLog(np.array(states), np.array(controls), np.array(nexts), np.array(ess),
-                  np.array(rho), np.array(d_log), np.array(t_iter), float(progress), beam)
+                  np.array(rho), np.array(d_log), np.array(t_iter), float(progress), beam, plant)
 
 
-def chassis(log: SimLog, cfg: Config) -> dict[str, np.ndarray]:
-    """Slip angles, body slip and lateral acceleration of the plant along the run."""
-    veh = cfg.vehicle
+def chassis(log: SimLog) -> dict[str, np.ndarray]:
+    """Slip angles, body slip and lateral acceleration of the plant along the run.
+
+    Uses the plant's parameters, not the controller's: with a model error
+    (part H, plant mu = 0.8) the forces are the real ones.
+    """
+    veh = log.plant
     alpha_f, alpha_r = slip_angles(log.states, log.controls[:, 1], veh)
     fzf, fzr = axle_loads(veh)
     fyf = tire_force(alpha_f, fzf, veh.cornering_stiffness_front, veh)
@@ -105,26 +118,67 @@ def chassis(log: SimLog, cfg: Config) -> dict[str, np.ndarray]:
     }
 
 
-def print_summary(log: SimLog, cfg: Config, track: trk.Track) -> None:
+def summarize(log: SimLog, cfg: Config, track: trk.Track) -> dict:
+    """The numbers of one run, as plain floats (printed, logged, compared by sweep.py)."""
+    plant = log.plant
     d_max = cfg.cost.track_half_width - 0.5 * cfg.vehicle.width
-    duration = len(log.states) * cfg.mppi.dt
-    lap = log.progress >= track.length
-    off = np.abs(log.d) > d_max
-    ch = chassis(log, cfg)
+    ch = chassis(log)
+    fast = log.states[:, 3] > plant.blend_speed_high   # dérive sans objet en dessous
+    deg = lambda k: float(np.degrees(np.abs(ch[k][fast]).max())) if fast.any() else 0.0
     p5, p50, p95 = np.percentile(log.ess, [5, 50, 95])
+    return {
+        "lap": bool(log.progress >= track.length),
+        "t": len(log.states) * cfg.mppi.dt,
+        "progress": log.progress,
+        "length": track.length,
+        "off": int((np.abs(log.d) > d_max).sum()),
+        "dmax": float(np.abs(log.d).max()),
+        "d_limit": d_max,
+        "v_mean": float(ch["speed"].mean()),
+        "v_max": float(ch["speed"].max()),
+        "a_lat_max": float(np.abs(ch["a_lat"]).max()),
+        "mu_g": plant.mu * G,
+        "beta_max": deg("beta"),
+        "alpha_f_max": deg("alpha_f"),
+        "alpha_r_max": deg("alpha_r"),
+        "alpha_lin": float(np.degrees(1.0 / plant.cornering_stiffness_front)),   # fin de la zone linéaire
+        "ess_med": float(p50),
+        "ess_p5": float(p5),
+        "ess_p95": float(p95),
+        "K": cfg.mppi.num_samples,
+        "jitter": float(np.abs(np.diff(log.controls[:, 1])).mean()),   # rad/pas, théorie §7.5
+        "t_iter_ms": float(1e3 * np.median(log.t_iter)),
+    }
 
-    print(f"controller model {cfg.model}, plant dynamic ({cfg.vehicle.tire_model} tires)")
-    print(f"lap {'done' if lap else 'NOT done'} in {duration:.2f} s, "
-          f"progress {log.progress:.1f}/{track.length:.1f} m")
-    print(f"offtrack steps {off.sum()}, max |d| {np.abs(log.d).max():.3f} m (limit {d_max:.2f})")
-    print(f"v mean {ch['speed'].mean():.2f} max {ch['speed'].max():.2f} m/s, "
-          f"max a_lat {np.abs(ch['a_lat']).max():.1f} m/s2 (mu g = {cfg.vehicle.mu * G:.1f})")
-    fast = log.states[:, 3] > cfg.vehicle.blend_speed_high   # dérive sans objet en dessous
-    deg = lambda k: np.degrees(np.abs(ch[k][fast]).max()) if fast.any() else 0.0
-    print(f"above {cfg.vehicle.blend_speed_high} m/s: max |beta| {deg('beta'):.1f} deg, "
-          f"max |alpha_f| {deg('alpha_f'):.1f} deg, max |alpha_r| {deg('alpha_r'):.1f} deg")
-    print(f"ESS median {p50:.0f} p5 {p5:.0f} p95 {p95:.0f} / K={cfg.mppi.num_samples}")
-    print(f"iteration time median {1e3 * np.median(log.t_iter):.1f} ms")
+
+def summary_rows(runs: dict[str, dict]) -> list[report.Row]:
+    """One column per controller model, metrics grouped by theme."""
+    rs = list(runs.values())
+    line = lambda label, f: [cell(label)] + [f(r) for r in rs]   # noqa: E731
+    return [
+        line("lap", report.lap_cell),
+        line("off-track steps", lambda r: report.off_cell(r["off"])),
+        line("max |d| (m)", lambda r: report.dmax_cell(r["dmax"], r["d_limit"])),
+        None,
+        line("speed mean / max (m/s)", lambda r: cell(f"{r['v_mean']:.2f} / {r['v_max']:.2f}")),
+        line("max a_lat (m/s²)", lambda r: cell(f"{r['a_lat_max']:.1f} ({r['a_lat_max'] / r['mu_g']:.0%} of μg)",
+                                                 report.BAD if r["a_lat_max"] > r["mu_g"] else "")),
+        None,
+        line("max |β| (deg)", lambda r: cell(f"{r['beta_max']:.1f}")),
+        line("max |α_f| (deg)", lambda r: report.alpha_cell(r["alpha_f_max"], r["alpha_lin"])),
+        line("max |α_r| (deg)", lambda r: report.alpha_cell(r["alpha_r_max"], r["alpha_lin"])),
+        None,
+        line("ESS median / p5", lambda r: report.ess_cell(r["ess_med"], r["ess_p5"], r["K"])),
+        line("steering jitter (rad/step)", lambda r: cell(f"{r['jitter']:.3f}")),
+        line("iteration time (ms)", lambda r: cell(f"{r['t_iter_ms']:.1f}")),
+    ]
+
+
+def describe(cfg: Config) -> str:
+    """The settings shared by every run of a script, on one line."""
+    m, v = cfg.mppi, cfg.vehicle
+    return (f"v_ref {cfg.cost.v_ref} · λ {m.lam} · K {m.num_samples} · T {m.horizon} · "
+            f"plant {v.tire_model} μ={v.mu} {v.integrator}×{v.substeps}")
 
 
 def save_trajectories(log: SimLog, cfg: Config, path: Path) -> None:
@@ -147,7 +201,7 @@ def plot_trajectory(log: SimLog, cfg: Config, track: trk.Track, path: Path) -> N
     """Track edges, driven path colored by body slip angle, and the rollout beam at one instant."""
     fig, ax = plt.subplots(figsize=(9, 6))
     zoom = ax.inset_axes([0.35, 0.3, 0.3, 0.4]) if log.beam is not None else None
-    beta = np.degrees(chassis(log, cfg)["beta"])
+    beta = np.degrees(chassis(log)["beta"])
     lim = max(np.abs(beta).max(), 1.0)
 
     for a in filter(None, (ax, zoom)):
@@ -175,7 +229,7 @@ def plot_series(log: SimLog, cfg: Config, path: Path) -> None:
     """ESS, d, speed, yaw rate, slip angles and steering against time."""
     d_max = cfg.cost.track_half_width - 0.5 * cfg.vehicle.width
     t = np.arange(len(log.states)) * cfg.mppi.dt
-    ch = chassis(log, cfg)
+    ch = chassis(log)
     alpha_sat = np.degrees(1.0 / cfg.vehicle.cornering_stiffness_front)   # fin de la zone linéaire
 
     fig, axs = plt.subplots(6, 1, figsize=(9, 13), sharex=True)
@@ -221,15 +275,38 @@ def main():
     fig_dir.mkdir(parents=True, exist_ok=True)
 
     models = ("dynamic", "kinematic") if args.model == "both" else (args.model or cfg.model,)
-    for model in models:
-        c = with_model(cfg, model)
-        log = simulate(c, track)
-        print_summary(log, c, track)
-        save_trajectories(log, c, results / "trajectories" / f"step2_{model}.npz")
-        plot_trajectory(log, c, track, fig_dir / f"step2_{model}_trajectory.png")
-        plot_series(log, c, fig_dir / f"step2_{model}_series.png")
-        print()
-    print(f"figures in {fig_dir}")
+    report.header("run_sim", describe(cfg))
+
+    runs, files = {}, []
+    with report.progress() as bar:
+        for model in models:
+            c = with_model(cfg, model)
+            label = f"[bold]{model}[/] rollouts"
+            task = bar.add_task(label, total=track.length, info="")
+            on_step = lambda p: bar.update(task, completed=min(p, track.length),   # noqa: E731
+                                           info=f"{p:5.1f}/{track.length:.1f} m")
+            log = simulate(c, track, on_step=on_step)
+            bar.stop_task(task)   # le chrono ne compte que la simulation, pas les figures
+            runs[model] = summarize(log, c, track)
+            ok = runs[model]["lap"] and runs[model]["off"] == 0
+            bar.update(task, description=f"{'[green]✔' if ok else '[red]✘'}[/] {label}")
+
+            paths = (results / "trajectories" / f"step2_{model}.npz",
+                     fig_dir / f"step2_{model}_trajectory.png", fig_dir / f"step2_{model}_series.png")
+            save_trajectories(log, c, paths[0])
+            plot_trajectory(log, c, track, paths[1])
+            plot_series(log, c, paths[2])
+            files += paths
+
+    columns = ["", *(f"{m} rollouts" for m in runs)]
+    rows = summary_rows(runs)
+    report.print_table(columns, rows)
+    md = f"{describe(cfg)}\n\n{report.markdown_table(columns, rows)}\n\n" + \
+         "\n".join(f"- `{report.relative(f)}`" for f in files)
+    log_md = report.write_log(results, "sim", "-".join(runs), md, {"config": cfg, "runs": runs})
+    for f in files:
+        report.console.print(f"  [dim]{report.relative(f)}[/]")
+    report.done(f"log [bold]{report.relative(log_md)}[/] (+ .json)")
 
 
 if __name__ == "__main__":

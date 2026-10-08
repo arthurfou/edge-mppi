@@ -15,6 +15,7 @@ pyyaml = ">=6.0"
 cmake = ">=3.24"
 ninja = ">=1.11"
 pytest = ">=9.1.1,<10"
+rich = ">=13"
 
 # CUDA toolkit on the dev PC only.
 # On the Jetson (linux-aarch64) CUDA is provided by JetPack at the system level.
@@ -43,9 +44,7 @@ check = { cmd = "python bench/check_parity.py --config config/mppi.yaml", depend
 # STEP 1
 track = "python python/generate_track.py --config config/mppi.yaml"
 test = { cmd = "pytest -q python/tests", env = { PYTHONPATH = "python" }, depends-on = ["track"] }
-sim = { cmd = "python python/run_sim.py --config config/mppi.yaml --model {{ model }}",
-        args = [{ arg = "model", default = "dynamic" }], 
-        depends-on = ["track"] }
+sim = { cmd = "python python/run_sim.py --config config/mppi.yaml --model {{ model }}", args = [{ arg = "model", default = "dynamic" }], depends-on = ["track"] }
 sweep = { cmd = "python bench/sweep.py", depends-on = ["track"] }
 
 # STEP 2
