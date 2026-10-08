@@ -34,10 +34,11 @@ compile_commands.json
 *.png
 *.pdf
 *.gif
-results/*
-!results/track/
-results/track/*
-!results/track/costmap.npz
+results/
+# results/*
+# !results/track/
+# results/track/*
+# !results/track/costmap.npz
 
 # IDE and OS
 .vscode/
