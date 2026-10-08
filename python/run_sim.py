@@ -6,7 +6,7 @@ model. The controller rolls out the model named in the config: dynamic
 
 Writes the trajectory plot and the time series to results/figures/, the
 (state, control, next_state) triplets of the plant to results/trajectories/,
-and the summary to results/logs/ (Markdown + JSON).
+and, with --save, a report to results/reports/ (Markdown + JSON).
 """
 import argparse
 import time
@@ -267,6 +267,7 @@ def main():
     ap.add_argument("--config", default="config/mppi.yaml")
     ap.add_argument("--model", choices=(*STATE_DIM, "both"), default=None,
                     help="rollout model, the YAML one by default; the plant is always dynamic")
+    report.add_save_flag(ap)
     args = ap.parse_args()
     cfg = load_config(args.config)
     track = trk.load(cfg.track.npz_path)
@@ -303,10 +304,9 @@ def main():
     report.print_table(columns, rows)
     md = f"{describe(cfg)}\n\n{report.markdown_table(columns, rows)}\n\n" + \
          "\n".join(f"- `{report.relative(f)}`" for f in files)
-    log_md = report.write_log(results, "sim", "-".join(runs), md, {"config": cfg, "runs": runs})
     for f in files:
         report.console.print(f"  [dim]{report.relative(f)}[/]")
-    report.done(f"log [bold]{report.relative(log_md)}[/] (+ .json)")
+    report.save_report(args.save, results, "sim", "-".join(runs), md, {"config": cfg, "runs": runs})
 
 
 if __name__ == "__main__":

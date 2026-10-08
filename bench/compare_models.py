@@ -5,8 +5,8 @@ Sigma and seeds. Only the model inside the rollouts changes (theory 7.9).
 
     pixi run compare                 # 5 seeds, figure + table
 
-The table is also written to results/logs/compare_<date>_seeds5.md, with the
-raw metrics and the base config in the .json next to it.
+With --save, the table is also written to results/reports/compare_<date>_seeds5.md
+(or _<NAME> with --save=NAME), with the raw metrics and the base config in the .json.
 """
 import argparse
 import dataclasses
@@ -51,7 +51,9 @@ def run(cfg: Config) -> SimLog:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=str(ROOT / "config" / "mppi.yaml"))
-    base = load_config(ap.parse_args().config)
+    report.add_save_flag(ap)
+    args = ap.parse_args()
+    base = load_config(args.config)
     track = trk.load(base.track.npz_path)
     d_max = base.cost.track_half_width - 0.5 * base.vehicle.width
     cfgs = variants(base)
@@ -106,9 +108,8 @@ def main():
     data = {"config": base, "seeds": list(SEEDS),
             "controllers": {name: {"model": cfgs[name].model, "w_adhesion": cfgs[name].cost.w_adhesion,
                                    "runs": rs} for name, rs in runs.items()}}
-    log_md = report.write_log(ROOT / "results", "compare", f"seeds{len(SEEDS)}", md, data)
     report.console.print(f"  [dim]{report.relative(out)}[/]")
-    report.done(f"log [bold]{report.relative(log_md)}[/] (+ .json)")
+    report.save_report(args.save, ROOT / "results", "compare", f"seeds{len(SEEDS)}", md, data)
 
 
 if __name__ == "__main__":

@@ -11,8 +11,9 @@ Each variant changes the controller (its config, rollout model included) and,
 separately, the simulated vehicle (the plant). This tells "my model is wrong"
 apart from "the world changed".
 
-The table is also written to results/logs/sweep_<date>_<experiments>.md, with
-the raw metrics and the base config in the .json next to it.
+With --save, the table is also written to results/reports/sweep_<date>_<experiments>.md
+(or _<NAME> with --save=NAME), with the raw metrics and the base config in the .json
+next to it. Put --save after the experiment names, or use --save=NAME.
 """
 import argparse
 import dataclasses
@@ -159,6 +160,7 @@ def main():
     ap.add_argument("--config", default=str(ROOT / "config" / "mppi.yaml"))
     ap.add_argument("--seeds", type=int, default=1,
                     help="1: the YAML seed, one row per variant; N > 1: seeds 0 to N-1, clean laps")
+    report.add_save_flag(ap)
     args = ap.parse_args()
     unknown = set(args.experiments) - set(EXPERIMENTS)
     if unknown:
@@ -204,8 +206,8 @@ def main():
     data = {"config": base, "seeds": args.seeds,
             "variants": [{"name": name, "plant": p, "runs": results[i * len(seeds):(i + 1) * len(seeds)]}
                          for i, (name, _, p) in enumerate(variants)]}
-    log_md = report.write_log(ROOT / "results", "sweep", "-".join(names) if args.experiments else "all", md, data)
-    report.done(f"log [bold]{report.relative(log_md)}[/] (+ .json)")
+    tag = "-".join(names) if args.experiments else "all"
+    report.save_report(args.save, ROOT / "results", "sweep", tag, md, data)
 
 
 if __name__ == "__main__":

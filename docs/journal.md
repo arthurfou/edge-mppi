@@ -268,3 +268,492 @@ comprenais pas, pour pouvoir y revenir.
 
 **Next.** Step 2, dynamic bicycle model with tire model. Re-check lambda
 after the model change (cost spread will move).
+
+---
+
+## 2026-10-08 - step 2 - parts 1 and A (setup, why kinematic is not enough)
+
+**Goal.** Prepare step 2 (part 1) and get the orders of magnitude that justify
+a dynamic model (part A, paper only).
+
+**Done.**
+- Part 1: `pixi.toml`, added the `# STEP 2` header above the `compare` task
+  (the task itself was already there, under `# STEP 1`). `pixi run compare`
+  will fail until `bench/compare_models.py` exists (part G).
+- Part 1.1 checks, all true on the current code: `controller.py` only uses
+  `cfg.state_dim` and `step(...)` (no change needed); the kinematic state is
+  at the CG (`cos(psi + beta)` in `dynamics.py`, choice S-B1 of step 1);
+  `mass`, `izz`, `cornering_stiffness_*`, `kinematic_blend_speed`, `mu` are in
+  the YAML but not loaded by `config.py` yet (part F).
+- Part A: answers to Q-A1 to Q-A3 and checkpoint A written in
+  `docs/step2_predictions.md` (new file, also holds the part H table).
+
+**Measured.** `pixi run test`: 28 passed (step 1 suite, unchanged).
+
+Part A, with L = 0.33, lr = 0.18, delta_max = 0.4, mu = 1:
+
+```
+geometric beta at delta_max   13.0 deg
+R at delta_max                0.801 m at the CG (0.78 m at the rear axle)
+v_max = sqrt(mu g R)          4.64 m/s on R_min = 2.19 m, 2.80 m/s on R = 0.80 m
+tight corner at 7 m/s         a_lat = 22.4 m/s2 = 2.3 g (kinematic accepts it)
+step 1 at v_ref = 3           max a_lat 6.3 m/s2 = 0.64 g, kinematic still valid
+```
+
+Note: 3 m/s on the centerline of R_min only gives 4.1 m/s2. The 6.3 measured
+in step 1 comes from the driven line, locally tighter than the centerline.
+
+**No effect / reverted.**
+
+**Questions posées pendant l'étape (et réponses).**
+
+*Partie 1, préparation*
+
+- **Le modèle cinématique est au CdG ou à l'essieu arrière ?** Au **CdG**,
+  depuis l'étape 1 (`step_1.md:170`, Q-B1/S-B1). Le code le montre :
+  `x += v cos(ψ + β) dt`. À l'essieu arrière, il n'y aurait pas de β. Raison :
+  le modèle dynamique s'écrit au CdG (Newton s'applique au CdG), et le
+  mélange de la partie D fait une moyenne état par état. Si les deux modèles
+  décrivaient deux points différents (séparés de `lr`), la position
+  « sauterait » pendant la transition. Le 0,78 m de `step_1.md:577` est
+  seulement le rayon calculé à l'essieu arrière (`L / tan δ`).
+
+*Partie A, repères et physique*
+
+- **Quel repère pour chaque modèle ?** Les deux en utilisent deux. `x, y, ψ`
+  sont dans le **repère monde**, pour les deux modèles (indispensable pour
+  les mélanger). La vitesse est dans le **repère véhicule** : explicitement
+  dans le dynamique (`vx, vy`), implicitement dans le cinématique
+  (`vx = v cos β`, `vy = v sin β`, β imposé par la géométrie). Preuve :
+  `vx cos ψ − vy sin ψ = v cos(ψ + β)`.
+- **β est dans quel repère ?** C'est un angle entre deux directions (le nez
+  et la vitesse du CdG), donc il ne dépend pas du repère. Repère véhicule :
+  `β = atan(vy/vx)`. Repère monde : `β = χ − ψ`, avec χ la direction de la
+  vitesse, d'où `cos(ψ + β)` dans le code. Cinématique : β fixé par δ
+  (≤ 13°). Dynamique : β libre (20 à 30° en dérapage).
+- **Le repère véhicule n'est pas galiléen ?** Exact, mais on n'y applique pas
+  Newton. Il faut distinguer **référentiel** (le sol, galiléen, où l'on
+  dérive) et **base de projection** (`e_x, e_y`, qui tournent). `vx, vy` sont
+  la vitesse par rapport au sol, projetée sur les axes de la voiture. Les
+  termes `+vy·r` et `−vx·r` viennent de `ė_x = r e_y`, `ė_y = −r e_x` : ce ne
+  sont pas des forces fictives. Dans le référentiel véhicule, on les
+  retrouverait comme force d'entraînement (Coriolis nulle, le CdG y est
+  immobile). `Izz ṙ = Mz` au CdG reste valable même si la voiture accélère.
+- **Le « plan de la roue » ?** Le plan vertical qui contient le disque de la
+  roue (vu de dessus : la direction où elle pointe). « Rouler sans glisser » =
+  la vitesse du point de contact est dans ce plan (α = 0). Un vrai pneu dérive
+  (α ≠ 0), et c'est cette dérive qui crée sa force latérale.
+- **Bicycle ou 4 roues ?** Bicycle (single-track, théorie §6.1) : une roue
+  par essieu, sur l'axe. Négligés : transfert de charge gauche/droite,
+  Ackermann (une seule valeur de δ), roulis. `width` ne sert qu'au coût.
+- **C'est quoi δ ?** Une **commande**, pas une variable calculée : l'angle
+  entre le plan de la roue avant et l'axe x du véhicule. Radians, > 0 à
+  gauche, borné à ±0,4 (par le contrôleur). `control[..., 1]`.
+- **Pourquoi `a_lat = v²/R` ?** Base de Frenet (ou polaire pour un cercle),
+  dans le référentiel du sol : `a = (dv/dt)·T + (v²/R)·N`. Sur un cercle :
+  `OM = R e_r`, `a = R θ̈ e_θ − R θ̇² e_r`, et `R θ̇² = v²/R`.
+- **μ, c'est quoi ?** Le coefficient de la loi de Coulomb `|T| ≤ μ N`.
+  Empirique (≈ 1 caoutchouc sur sec, ≈ 0,5 mouillé, ≈ 0,1 glace).
+  `mu: 1.0` est **supposé**, pas mesuré sur la voiture.
+- **D'où vient `v_max = √(μgR)` ?** `N = mg`, frottement latéral
+  `T = m v²/R`, pas de glissement si `T ≤ μN`. La masse se simplifie.
+  Le 2,8 m/s de la théorie est **au braquage maximal** (R ≈ 0,8 m, géométrie
+  de la voiture). Sur la piste, la limite est 4,6 m/s (R_min = 2,19 m,
+  `generate_track.py:27`). Et le cinématique ne devient pas faux d'un coup :
+  l'erreur grandit avec la dérive des pneus.
+- **Pourquoi séparer l'avant et l'arrière, Coulomb ne parle que du tout ?**
+  Coulomb s'applique **à chaque contact**. Charges :
+  `Fz_f = m g lr/L = 18,7 N`, `Fz_r = m g lf/L = 15,6 N`. En virage
+  stabilisé, les forces demandées sont exactement proportionnelles aux
+  charges, donc les deux essieux saturent ensemble à μg (c'est pour ça que le
+  raisonnement global marche). En transitoire, en accélération ou avec des
+  pneus différents, un essieu lâche avant l'autre : avant = sous-virage
+  (stable), arrière = survirage (tête-à-queue). Ramener au CdG : oui, mais
+  **force + moment** (torseur). Le moment `lf F_yf cos δ − lr F_yr` est
+  ce qui fait tourner ou déraper ; un point matériel ne peut pas déraper.
+- **Lacet, vitesse de lacet ?** Lacet = rotation autour de l'axe vertical
+  (roulis : axe x, tangage : axe y, ignorés). Angle de lacet = ψ (le cap).
+  Vitesse de lacet `r = ψ̇` (rad/s), 6e composante de l'état dynamique.
+- **Fx, Fy ?** Composantes des forces dans le repère véhicule : Fx
+  longitudinale (accélérer, freiner), Fy latérale (tourner). `F_yf`, `F_yr` :
+  forces latérales des pneus avant (*front*) et arrière (*rear*), à ne pas
+  confondre avec `r` la vitesse de lacet. La roue avant étant braquée,
+  `F_yf` se projette en `(−F_yf sin δ, F_yf cos δ)`.
+- **Les seules forces sont a, F_yf, F_yr ?** Dans le plan, oui : `Fx = m·a`
+  (a est une accélération, pas une force), `F_yf`, `F_yr`. `Fx` passe par le
+  CdG, donc pas de moment. Verticalement : poids et réactions `Fz`, qui
+  s'annulent mais fixent les limites `μ Fz`. Négligés : traînée, résistance
+  au roulement, pente.
+- **La voiture peut perdre l'adhérence en x ?** Physiquement oui :
+  patinage, blocage, taux de glissement `κ = (ωR − vx)/vx`, et le **cercle
+  d'adhérence** `Fx² + Fy² ≤ (μFz)²` par pneu. **Notre modèle n'en
+  représente rien** : `Fx = m·a` toujours obtenue, pas de `F_xf/F_xr`, pas de
+  cercle, pas de transfert de charge (pas de `h`). Acceptable en ligne droite
+  (|a| ≤ 4 → 14 N sur 34,3 N, 41 %). Optimiste en virage à la limite en
+  accélérant : il resterait `√(1 − 0,41²) ≈ 91 %` de capacité latérale, le
+  modèle en garde 100 %.
+
+*Hors périmètre, pour plus tard*
+
+- **Vraie voiture : modèle 4 roues ?** Non, le bicycle dynamique est le
+  standard (Liniger et al., F1TENTH). Priorités : identifier μ, C_S, Izz sur
+  la vraie voiture ; modéliser l'actionneur (servo du 1er ordre, moteur) ;
+  compenser la latence.
+- **Comment le robot voit la piste ?** Il ne la voit pas : état exact donné
+  par le simulateur, costmap précalculée. Voulu (`edge-mppi.md:50`). En vrai :
+  carte par SLAM lidar (une fois), localisation par filtre particulaire,
+  `vx, vy, r` par EKF (IMU + odométrie) ; `vy` est la plus dure à estimer.
+  Faisable : c'est l'architecture F1TENTH, et AutoRally (Georgia Tech) a fait
+  MPPI sur GPU embarqué en dérapage.
+- **Ajouter `δ + δ₀ ω` pour simuler un contrôle imparfait ?** Bonne idée,
+  mais **seulement dans le véhicule simulé** (`run_sim.py`), jamais dans
+  `step()` (parité CUDA). Le bruit blanc est le moins réaliste (s'annule à
+  50 Hz). Mieux : retard du servo `δ_réel += (δ_cmd − δ_réel)·dt/τ`, vitesse
+  limitée, biais de trim, gain `k δ_cmd`, bruit corrélé (Ornstein-Uhlenbeck).
+  Expérience possible après la partie H : tours propres en fonction de τ.
+- **Cercle d'adhérence** : extension la moins chère pour le réalisme
+  longitudinal (répartir `m·a` entre essieux, limiter `F_y` à
+  `√((μFz)² − Fx²)`), sans nouvel état.
+- **Pourquoi `step_2.md` cite `f1tenth_gym` ?** Simulateur officiel F1TENTH,
+  interface Gym (RL **et** contrôle classique). Utilisé seulement comme source
+  pour vérifier les paramètres (§3.5) et l'interprétation de `C_S` normalisée
+  par la charge (§4.2). Pas utilisé à la place de notre modèle : une seule
+  voiture à la fois (MPPI fait 1024 × 30 pas par itération), pas maîtrisable
+  ligne à ligne pour la parité CUDA, et c'est le but de l'étape. Pourrait
+  servir plus tard de véhicule simulé indépendant (test de robustesse).
+- **PyTorch passe par NumPy pour CUDA ?** Non. NumPy est CPU uniquement, et
+  CUDA ne « comprend » pas NumPy : notre kernel est une réécriture C++ à la
+  main, comparée par fichiers (`check_parity.py`). PyTorch a ses propres
+  tenseurs et appelle directement ses kernels CUDA précompilés (ATen, cuBLAS,
+  cuDNN). NumPy n'intervient que pour convertir (`from_numpy`,
+  `.cpu().numpy()`). « NumPy sur GPU » : CuPy ; kernels en Python : Numba.
+- **CUDA à la main ou bibliothèque ?** CUDA à la main pour ce projet :
+  c'est l'objectif, MPPI y gagne (un seul lancement, un thread par rollout,
+  état dans les registres, contre environ 1000 petits lancements par
+  itération en PyTorch naïf ; `torch.compile` et les CUDA graphs réduisent
+  l'écart), et latence prévisible sur Jetson. Idée : ajouter une version
+  PyTorch/CuPy comme point de comparaison dans le benchmark.
+
+**Next.** Part B: dynamic bicycle equations in `dynamics.py`
+(Q-B1 to Q-B3), then part C (tire models, `C_S` normalized by load).
+
+---
+
+## 2026-10-08 - step 2 - parts B to E (dynamic model, tires, blend, integrator)
+
+**Goal.** Write the dynamic single-track model in NumPy (part B), the three
+tire models (part C), make it safe at low speed by blending with the
+kinematic model (part D), then pick the integrator from measurements
+(part E). Same rule as step 1: this code is the reference for the CUDA kernel.
+
+**Done.**
+- Part B: `dynamic_derivative(state, a, delta, vehicle)` in `dynamics.py`,
+  the right-hand side `f(x, u)` of the 6 equations (world-frame position,
+  rotating-frame `+vy r` / `-vx r` terms, steering drag `-F_yf sin(delta)/m`,
+  yaw moment `lf F_yf cos(delta) - lr F_yr`). Written as a derivative, not a
+  step, so that the part E integrator can call it several times per step.
+  `Vehicle` gets `mass`, `izz`, `cornering_stiffness_front/rear`.
+- Part C: `axle_loads` (static, no load transfer), `tire_force` (linear, tanh,
+  simplified Pacejka with `B = C_S / C`, same slope `mu C_S F_z` at the origin
+  for all three), `slip_angles` (`alpha > 0` pushes towards +y). YAML/config:
+  `tire_model`, `pacejka_c`, `pacejka_e`, `TIRE_MODELS` + validation. The
+  `if tire_model` is a static choice read from the YAML, not a state branch.
+  `bench/plot_tires.py` (`pixi run tires`) draws `F(alpha)` on [-90, 90] deg
+  to `results/figures/step2_tire_curves.png` (checkpoint C).
+- Part D: `kinematic_blend_speed` replaced by `blend_speed_low: 1.0` /
+  `blend_speed_high: 1.5` (validated `0 < low < high`). Floor
+  `vx_safe = max(vx, blend_speed_low)` in `slip_angles`. New functions:
+  `step_kinematic6` (kinematic model in the 6-state, `vy`, `r` put back on the
+  manifold with `vx_next`), `blend_weight` (`kappa` by `clip`, no `if`),
+  `step_dynamic` (`kappa * dyn + (1 - kappa) * kin`, then `vx >= 0`).
+- Part E: `integrator: rk4`, `substeps: 1` in the YAML (`INTEGRATORS` +
+  validation, `substeps` must be an int >= 1). `step_dynamic_only` runs
+  `substeps` Euler or RK4 sub-steps (it was a provisional single Euler step
+  during part D). `bench/integrators.py` (S-E script) measures stiffness,
+  stability, accuracy and cost.
+- Tests added in `test_step2.py` for B to E: stiffness convention, same slope
+  (x3 tires), saturation + odd force (tanh, Pacejka), sign on the derivative
+  (x3 tires), sign on the full step, steady-state cornering (official Q-B2),
+  blend = kinematic below `v_low` (bit-exact), blend continuity at both band
+  edges, finiteness from 0 to 2 m/s under `np.errstate(all="raise")`
+  (3 tires x 2 integrators), never reverses, integrator stable at `v_low`.
+
+**Measured.** Dev PC (WSL2, no GPU), NumPy, dt = 0.02.
+
+Part B check (linear tire, steady turn at vx = 3, delta = 0.05, solved with
+`fsolve`): `F_yf cos(delta) + F_yr - m vx r = -9e-16`, yaw moment 0,
+r = 0.43972 rad/s (doc: 0.43974).
+
+Part C, front tire, F_zf = 18.73 N (N):
+
+```
+alpha (deg)   linear    tanh   pacejka
+14.3          18.70    14.25    14.44
+22.9          29.94    17.26    17.63
+37.2          48.64    18.52    18.73   (Pacejka peak)
+57.3          74.92    18.72    18.16
+85.9         112.31    18.73    17.12
+```
+
+Matches the table of section 4.4 (low-angle cells differ only because the doc
+rounds the degree values). Rear C_alpha prints 65.5 N/rad (exact 65.548), doc
+says 65.6: rounding, the test tolerance is 0.1.
+
+Part D:
+- checkpoint D: with `/ vx_safe` replaced by `/ vx`, the 3 finiteness cases
+  fail (`FloatingPointError: divide by zero`, `slip_angles`). Restored after.
+- from rest `[0, 0, 0, 0, 0, 0]`, a = 1, delta = 0.2: finite next state
+  `[0, 0, 0, 0.02, 0.0022, 0.0123]` (would be all NaN without the floor).
+- `step_kinematic6` vs step 1 `step` (4 states), 50 steps, delta = 0.3:
+  4e-16 with a = 0; 3.4 mm with a = 0.5. Not a bug: in the 6-state model `a`
+  accelerates `vx` (body axis, like the dynamic model), in the 4-state model it
+  accelerates the total speed `v`. They differ by `cos(beta)` (<= 3 %).
+
+Part E, `bench/integrators.py`:
+
+```
+stiffness (linear tires): yaw coefficient 95.2, shortest time constant
+  5 ms @ 0.5, 11 @ 1.0, 16 @ 1.5, 32 @ 3.0, 57 @ 5.0, 118 ms @ 8.0 m/s
+stability, unstable below (linear / pacejka):
+  euler x1 0.95 / 0.95   euler x2 0.47 / 0.47   euler x4 0.24 / 0.23
+  rk4 x1   0.68 / 0.67   rk4 x2   0.34 / 0.30   RK4 limit k dt = 2.785
+accuracy after 30 steps vs RK4 x200 (cm / max error on r):
+  (7.0, 0.4, -2.0): euler x1 22.09 / 0.584, euler x4 4.09 / 0.302, rk4 x1 0.00 / 0.000
+  (5.0, 0.3, 0.0):  euler x1 10.91 / 0.350, euler x4 2.53 / 0.079, rk4 x1 0.00 / 0.000
+cost, ms per blended step, K = 1024:
+  euler x1 0.192, x2 0.276, x4 0.475, rk4 x1 0.488, x2 0.896
+```
+
+All stability and accuracy numbers match sections 5.2, 6.3, 6.4. Timings are
+~1.5x the doc's (slower machine), same ratios. Decision: RK4 x1, same cost as
+Euler x4, 100 to 1000x more accurate, stable down to 0.68 < `v_low` = 1.0.
+
+`test_integrator_stable_at_blend_low` can fail (checked in memory): rk4 /
+v_low 1.0 -> |r| 6e-39 OK; euler / 1.0 -> 3e-6 OK (threshold 0.95); euler /
+0.9 -> 0.52 FAIL; rk4 / 0.6 -> 0.20 FAIL.
+
+`pixi run test` at the end of part E: 49 passed.
+
+**No effect / reverted.**
+- `pixi run bench/plot_tires.py` -> `Permission denied (os error 13)`.
+  `pixi run` expects a task name or a command, so it tried to execute the
+  file itself (not executable, no shebang). Use `pixi run tires` or
+  `pixi run python bench/plot_tires.py`.
+
+**YAML fields added in parts B to E** (to mirror in `cuda/include/mppi/config.hpp`):
+- `vehicle.mass`, `vehicle.izz`, `vehicle.cornering_stiffness_front`,
+  `vehicle.cornering_stiffness_rear` (were in the YAML, now loaded)
+- `vehicle.tire_model`, `vehicle.pacejka_c`, `vehicle.pacejka_e`
+- `vehicle.blend_speed_low`, `vehicle.blend_speed_high`; removed
+  `vehicle.kinematic_blend_speed`
+- `vehicle.integrator`, `vehicle.substeps`
+
+**Questions posées pendant l'étape (et réponses).**
+
+*Partie B, modèle dynamique*
+
+- **C'est quoi `check_b.py` ?** Un script jetable, hors du projet (dossier
+  temporaire de la session), pour vérifier les équations avant la partie C :
+  il remplace en mémoire les fonctions de pneu par un pneu linéaire, puis
+  vérifie la rotation de repère, le broadcasting `(5, 7, 6)`, Q-B2 et le
+  signe de `v̇x` (Q-B1). Rien à garder : `test_steady_state_cornering` fait
+  la vérification officielle.
+- **Que fait `dynamic_derivative`, et où est-elle ?** `dynamics.py`, section
+  « Modèle dynamique ». Entrée : état + `(a, δ)`. Sortie : les 6 dérivées
+  `[ẋ, ẏ, ψ̇, v̇x, v̇y, ṙ]`. Elle ne fait **pas** avancer le temps : c'est
+  l'intégrateur qui fait `x + dt·f(x)` (Euler) ou 4 évaluations (RK4).
+  Ordre interne : forces de pneu, Newton dans la base qui tourne, rotation de
+  la vitesse vers le repère monde.
+- **Pourquoi séparer dérivée et intégrateur pour le dynamique, et pas pour le
+  cinématique ?** Ce n'est pas parce que `step` était déjà pris : `step` reste
+  l'interface unique et choisit le modèle par la taille de l'état. Le
+  dynamique est **raide** (constantes de temps de `vy`, `r` de 5 à 32 ms,
+  du même ordre que `dt = 20` ms) : il faut pouvoir appeler `f` plusieurs
+  fois par pas (RK4, sous-pas), comparer les intégrateurs sur la même
+  physique, et tester la physique seule (`v̇y = ṙ = 0` en virage stabilisé).
+  Le cinématique n'a pas d'évolution rapide (`r` y est imposé, pas intégré) :
+  Euler en un pas suffit, et `max(v + a dt, 0)` porte sur l'état après le
+  pas, pas sur la dérivée.
+
+*Partie C, pneus*
+
+- **F(α), c'est la force de frottement ?** Presque. C'est la **force
+  latérale** du pneu. À petit angle, le pneu ne glisse pas : la bande de
+  roulement se déforme comme un ressort (`F ≈ μ C_S F_z α`). À grand angle,
+  le contact glisse vraiment et la force plafonne à `μ F_z` : là, c'est du
+  frottement de Coulomb. Adhérence sous la limite, frottement à la limite.
+- **Pourquoi `pixi run bench/plot_tires.py` donne `Permission denied` ?**
+  Voir **No effect / reverted**.
+- **Partie C finie ?** Oui, sauf Q-C1 à Q-C4. Le test 4 de §4.6 (signe sur le
+  pas complet) attendait l'intégrateur : ajouté en partie E.
+
+*Partie D, basse vitesse*
+
+- **C'était prévu que le dynamique rate à basse vitesse ?** Oui, dès le
+  départ : `edge-mppi.md:140` (bascule sous 1,5 m/s avec interpolation),
+  théorie §6.5, `kinematic_blend_speed: 1.5` dans le YAML depuis l'étape 0,
+  et le cinématique écrit au CdG à l'étape 1 (S-B1) exprès pour le mélange.
+  C'est une limite de tous les modèles de pneu à angle de dérive (`α`
+  indéfini à `vx = 0`, pneu arrêté = contrainte de non-glissement).
+  Solution standard (AMZ, ETH Zurich, Kabzan et al. 2020).
+- **Cette « disjonction de cas » pose problème en CUDA ?** Non : ce n'est pas
+  un `if`, c'est un mélange. Tous les threads calculent `dyn` **et** `kin`,
+  seule la valeur de `κ` change. `clip`/`maximum` deviennent `fminf`/`fmaxf`,
+  des instructions machine sans saut. C'est pour ça qu'il faut le plancher
+  `vx_safe` : on calcule toujours le dynamique, même à l'arrêt. Les `if`
+  restants (`tire_model`, `integrator`) dépendent du YAML, pas de l'état :
+  uniformes sur le warp, et futurs paramètres de template.
+- **On calcule cinématique ET dynamique, alors qu'on croyait faire « que
+  dynamique » ?** Le « modèle dynamique » du projet est le modèle **mélangé**.
+  `model: kinematic` ne calcule toujours que le cinématique. On ne peut pas
+  faire que du dynamique : chaque simulation part de `vx = 0` (un pas de
+  dynamique pur donne un état tout NaN), et des rollouts qui freinent
+  repassent sous 1 m/s. Surcoût estimé (non mesuré) : quelques pourcents en
+  CUDA (3 fonctions transcendantes, déjà partagées avec le dynamique, contre
+  ~50 pour RK4 + Pacejka). Si ça compte à l'étape 4 : vote de warp
+  `__all_sync(κ == 1)` pour sauter le cinématique sans divergence, à mesurer.
+- **Partie D finie ?** Oui, sauf Q-D1 à Q-D3. Restait pour la partie E :
+  l'intégrateur réel et le second `parametrize`.
+
+*Partie E, intégration*
+
+- **L'idée de la partie E, c'est la divergence de l'approximation ?** En
+  partie. Trois critères : **stabilité** (l'erreur explose-t-elle ?),
+  **précision** (quelle erreur ?), **coût**. La stabilité est une condition,
+  déjà satisfaite par tous les candidats au-dessus de `v_low = 1,0` grâce à la
+  partie D ; elle ne départage pas. C'est la précision à coût égal qui
+  choisit RK4 ×1 (22 cm d'erreur pour Euler ×1 à 7 m/s, 0,00 pour RK4).
+- **Il n'y a pas un Euler implicite dans `step_kinematic6` ?** Non, les
+  positions et `vx` sont en Euler **explicite**. Il ne diverge pas car aucune
+  de ces dérivées ne rappelle l'état vers une valeur (pas de terme
+  `−k·x`). `vy` et `r` ne sont pas intégrés du tout, ils sont **imposés**.
+  Mais l'intuition est juste : imposer `r = r_cin`, c'est la limite `k → ∞`
+  de l'Euler implicite sur `ṙ = −k (r − r_cin)`, qui donne
+  `r_{n+1} = (r_n + k dt r_cin)/(1 + k dt)`, stable pour tout `dt`.
+- **Deux cas d'école pour la différence ?** (1) Voiture à vitesse constante,
+  `ẋ = v` : Euler exact pour tout `dt`, car `ẋ` ne dépend pas de `x`.
+  (2) Café qui refroidit, `Ṫ = −k (T − 20)`, `k = 3`, `dt = 1` : explicite
+  80 → −100 → 260 → −460 (écart ×(1 − k dt) = ×−2) ; implicite
+  80 → 35 → 23,75 → 20,94 (écart ÷(1 + k dt) = ÷4) ; exact 80 → 23,0 → 20,15.
+  `k → ∞` : on impose `T = 20`. Projet : `x, y, ψ` = cas 1 ; `vy, r`
+  dynamiques à basse vitesse = cas 2 (`k = 95/vx`) ; cinématique = `T`
+  imposé.
+- **Mais si la vitesse change beaucoup pendant `dt`, un plus petit `dt` est
+  meilleur ?** Oui : c'est la **précision**, pas la stabilité. `ẋ = 2t`,
+  `x(3) = 9` : Euler donne 6 / 7,5 / 8,7 pour `dt` = 1 / 0,5 / 0,1 (erreur
+  ∝ `dt`, ordre 1). L'erreur s'accumule mais ne s'amplifie pas. Stabilité =
+  effet de seuil (`k dt < 2`), précision = continue. C'est le tableau de
+  §6.3 : Euler ×1/×2/×4 = 22 / 7,4 / 4,1 cm. RK4 (erreur ∝ `dt⁴`) serait
+  exact sur `ẋ = 2t` dès `dt = 1`.
+- **Et `v(t) = v_inf (1 − e^{−kt})`, ce n'est pas comme le café ?** Ça dépend
+  de **comment on l'écrit**, pas de la forme de la solution. Si `v(t)` est
+  une fonction connue et qu'on n'intègre que `x` : imprécis mais stable
+  (Euler `x(3)` = 1,95 contre 2,67, `k = 3`, `dt = 1`). Si `v` est un état
+  avec `v̇ = −k (v − v_inf)` : c'est exactement le café, `v` = 0 → 3 → −1 → 5.
+  Règle : Euler explicite peut exploser quand la dérivée d'un état dépend de
+  cet état lui-même avec un rappel fort (`k dt > 2`). Cinématique : `r` lu
+  (cas A). Dynamique : `r` intégré avec rappel `95/vx` (cas B).
+
+**Next.** Answer Q-B1 to Q-E4 in `docs/step2_predictions.md` if not done.
+Parts F to H are committed (`6ee97ef`, `a756e55`) and `pixi run test` gives
+58 passed: they get their own entry.
+
+---
+
+## 2026-10-08 - step 2 - parts F to H (wiring, comparison figure, experiments tooling)
+
+**Goal.**
+
+**Done.**
+
+**Measured.**
+
+**No effect / reverted.**
+
+**Questions posées pendant l'étape (et réponses).**
+
+*Partie F, brancher le modèle*
+
+- **La partie F est finie ?** Oui pour le code : le point de contrôle F
+  (`pixi run test` vert, `pixi run sim` boucle un tour avec la config de 7.1)
+  passe. 58 tests au lieu des 55 du doc : les 3 de plus sont
+  `test_positive_steer_pushes_left` (×3 pneus), absent de la solution. Restent
+  les questions Q-F1 à Q-F5.
+- **Faire deux configs, `mppi-dynamic.yaml` et `mppi-kinematic.yaml` ?** Non.
+  Le protocole 0.3 impose deux contrôleurs identiques sauf le modèle des
+  rollouts : deux YAML complets seraient des copies à 99 %, à garder
+  synchronisées à la main (λ re-réglé dans l'un, oublié dans l'autre = 
+  comparaison faussée sans que rien ne le signale), et le C++ ne lira qu'un
+  fichier. Choix : un seul YAML et `run_sim.py --model {kinematic, dynamic,
+  both}`, qui fait `replace(cfg, model=m, state_dim=STATE_DIM[m])` (même idée
+  que l'en-tête de `test_step1.py`).
+- **Que fait exactement `pixi run sim --model kinematic` ?** Pixi colle les
+  arguments en plus à la fin du `cmd` de la tâche : `python
+  python/run_sim.py --config config/mppi.yaml --model kinematic`, lancé dans
+  l'environnement pixi (pas un `pixi run python` imbriqué). Les arguments ne
+  vont qu'à la tâche lancée, pas à ses `depends-on` (`track` tourne sans).
+  Avec argparse, la dernière valeur gagne : `pixi run sim --config autre.yaml`
+  surcharge celle de la tâche.
+- **Une tâche pixi peut contenir plusieurs commandes ? Les arguments vont où ?**
+  Oui, `cmd` est une ligne de shell (`&&`, `;`, `|`). Les arguments libres
+  sont collés à la fin de toute la chaîne, donc ne vont qu'à la **dernière**
+  commande (`echo A && echo B extra`). Pour les placer ailleurs : `args =
+  [{ arg = "model", default = "dynamic" }]` et `{{ model }}` dans le `cmd`,
+  passés par position (`pixi run sim kinematic`). Une tâche qui déclare des
+  `args` refuse alors tout argument en plus (« received more arguments than
+  expected »).
+- **Sans `--config`, quelle config prend `run_sim.py` ?** `config/mppi.yaml`,
+  la valeur par défaut d'argparse. Chemin **relatif au dossier courant** :
+  sans souci avec pixi (les tâches tournent depuis la racine du projet),
+  `FileNotFoundError` si on lance le script à la main depuis `python/`.
+  Sans `--model`, c'est le `model:` du YAML.
+
+*Partie G, figure comparative*
+
+- **Pourquoi `pixi run compare` refusait de démarrer (« expected a table key,
+  found a newline ») ?** La tâche `sim` avait été écrite sur trois lignes :
+  en TOML, une table en ligne `{ … }` doit tenir sur **une seule ligne**. Pour
+  l'écrire sur plusieurs lignes, utiliser une section `[tasks.sim]` avec
+  `cmd = …`, `args = …`, `depends-on = …`.
+- **Pourquoi 1/5 tours propres pour le cinématique + rustine, contre 2/5 dans
+  le doc ?** Pas un bug : les lignes dynamique et cinématique pur sont
+  identiques au chiffre près. Avec une ESS de 2 à 19, ce contrôleur ne garde
+  qu'un ou deux rollouts par itération : il est chaotique, le moindre écart
+  numérique change l'issue d'une graine. La conclusion ne change pas.
+
+*Outillage (affichage, rapports)*
+
+- **Comment `rich` fait les en-têtes, barres et tableaux ?** Cinq briques :
+  `Console` + balisage `[bold magenta]…[/]` (`escape()` pour le texte venu
+  d'ailleurs, `highlight=False` pour que seules nos couleurs aient un sens) ;
+  `Progress` = suite de colonnes (spinner, texte, barre, champ libre, chrono)
+  et des tâches qu'on fait avancer (`update`, `advance`, `stop_task`) ;
+  `Table` (`box.SIMPLE_HEAD`, `no_wrap` sur les nombres, `overflow="fold"`
+  sur les noms, `add_section()`) ; `console.status(...)` pour un spinner seul.
+  `simulate(..., on_step=...)` fait avancer la barre sans que la simulation
+  connaisse `rich`. Pour un pool de processus, `as_completed` plutôt que
+  `pool.map`, sinon la barre attend la simulation la plus lente.
+- **À quoi sert `report.py` ?** À l'affichage et aux rapports, rien d'autre :
+  il ne calcule aucun résultat. Chaîne : `simulate()` → `SimLog`,
+  `summarize()` → nombres bruts, `report.*` → écran et fichiers. Un seul
+  endroit pour les règles de couleur (vert dans la cible, jaune proche d'une
+  limite, rouge échec), partagé par `sim`, `sweep` et `compare`. Une cellule
+  est `(texte, style)` : le terminal reçoit le style, le Markdown le texte
+  seul, donc les deux montrent les mêmes chiffres. Hors de `python/mppi/` :
+  ce n'est pas du code de référence pour CUDA.
+- **Ne sauvegarder un rapport que quand je le demande ?** Flag `--save` sur
+  les trois scripts : rien n'est écrit sans lui ; `--save` →
+  `results/reports/<kind>_<date>_<tag>.md` + `.json` (config complète,
+  métriques brutes) ; `--save=NOM` remplace le tag. Pièges : avec `sim`, le
+  modèle d'abord (`pixi run sim dynamic --save`, arguments positionnels) ;
+  avec `sweep`, `--save` après les expériences ou `--save=NOM`, sinon
+  `--save H1` prend `H1` pour le nom.
+
+*Bilan*
+
+- **Hormis les questions H et le journal, l'étape 2 est finie ?** Le code oui,
+  tous les points techniques du critère 0.2 sont cochés. Restent : les
+  prédictions et mesures H1 à H9, les réponses Q-B à Q-G, la vérification de
+  Q-A3 sur la figure, la case du README, le commit et `git tag step-2`.
+
+**Next.**

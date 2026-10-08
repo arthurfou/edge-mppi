@@ -1,9 +1,9 @@
-"""Terminal rendering and result logs, shared by run_sim.py and sweep.py.
+"""Terminal rendering and saved reports, shared by run_sim.py, sweep.py and compare_models.py.
 
 Presentation only: nothing here computes or changes a result. A table is a
 list of rows of cells; a cell is (text, rich style). The terminal gets the
-styles, the Markdown log gets the plain text, so both always show the same
-numbers.
+styles, the Markdown report gets the plain text, so both always show the same
+numbers. A report is written only on request (--save, see add_save_flag).
 
 Colors carry one meaning each:
   green   within the target (no off-track step, ESS p5 in the 1-10 % of K band)
@@ -13,6 +13,7 @@ Colors carry one meaning each:
 """
 import dataclasses
 import json
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -170,13 +171,21 @@ def _jsonable(obj):
     return obj
 
 
-def write_log(results: Path, kind: str, tag: str, markdown: str, data: dict) -> Path:
-    """results/logs/<kind>_<date>_<tag>.md (readable) and .json (full config, raw metrics).
+def add_save_flag(ap) -> None:
+    """--save: keep a report of this run. Without it, nothing is written to results/reports/."""
+    ap.add_argument("--save", nargs="?", const="", default=None, metavar="NAME",
+                    help="write a report to results/reports/ (Markdown + JSON); "
+                         "NAME replaces the automatic tag in the file name")
+
+
+def write_report(results: Path, kind: str, tag: str, markdown: str, data: dict) -> Path:
+    """results/reports/<kind>_<date>_<tag>.md (readable) and .json (full config, raw metrics).
 
     Returns the .md path. The command line is recorded in both.
     """
     stamp = datetime.now()
-    stem = results / "logs" / f"{kind}_{stamp:%Y-%m-%d_%H-%M-%S}_{tag}"
+    tag = re.sub(r"[^\w.=-]+", "-", tag).strip("-") or kind   # nom de fichier sûr
+    stem = results / "reports" / f"{kind}_{stamp:%Y-%m-%d_%H-%M-%S}_{tag}"
     stem.parent.mkdir(parents=True, exist_ok=True)
     command = "python " + " ".join(sys.argv)
     md = f"# {kind} {stamp:%Y-%m-%d %H:%M:%S}\n\n`{command}`\n\n{markdown}\n"
@@ -184,6 +193,15 @@ def write_log(results: Path, kind: str, tag: str, markdown: str, data: dict) -> 
     payload = {"date": stamp.isoformat(timespec="seconds"), "command": command, **data}
     stem.with_suffix(".json").write_text(json.dumps(_jsonable(payload), indent=1))
     return stem.with_suffix(".md")
+
+
+def save_report(save: str | None, results: Path, kind: str, tag: str, markdown: str, data: dict) -> None:
+    """Writes the report only if --save was given (save is then "" or NAME), and says so."""
+    if save is None:
+        console.print("[dim]not saved: add --save or --save=NAME to keep a report in results/reports/[/]")
+        return
+    path = write_report(results, kind, save or tag, markdown, data)
+    done(f"report [bold]{relative(path)}[/] (+ .json)")
 
 
 def relative(path: Path) -> str:
