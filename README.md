@@ -4,6 +4,10 @@
 
 Real-time model predictive control, GPU-accelerated, under a hard latency budget.
 
+<p align="center">
+  <img src="docs/media/mppi_lap.gif" alt="One lap of MPPI, zooming in on single iterations" width="800">
+</p>
+
 ## What this is
 
 An MPPI (Model Predictive Path Integral) controller for a car-like vehicle,
@@ -17,10 +21,6 @@ actually applied.
 
 The work is in progress. The NumPy reference controller runs (kinematic, then
 dynamic bicycle model with tires); the CUDA port is in progress.
-
-<p align="center">
-  <img src="docs/media/mppi_lap.gif" alt="One lap of MPPI, zooming in on single iterations" width="800">
-</p>
 
 One lap of the NumPy controller with the dynamic model (step 2). At 12 m of
 progress the lap slows down and zooms in on single MPPI iterations: K = 1024
