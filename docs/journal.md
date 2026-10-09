@@ -13,7 +13,7 @@ Format:
 **Done.**
 
 **Measured.** Numbers, with the config they came from (K, T, model, hardware,
-power mode).
+power limit, other jobs on the node).
 
 **No effect / reverted.** What was tried, why a gain was expected, what
 actually happened.
@@ -431,7 +431,7 @@ in step 1 comes from the driven line, locally tighter than the centerline.
   c'est l'objectif, MPPI y gagne (un seul lancement, un thread par rollout,
   état dans les registres, contre environ 1000 petits lancements par
   itération en PyTorch naïf ; `torch.compile` et les CUDA graphs réduisent
-  l'écart), et latence prévisible sur Jetson. Idée : ajouter une version
+  l'écart), et latence prévisible. Idée : ajouter une version
   PyTorch/CuPy comme point de comparaison dans le benchmark.
 
 **Next.** Part B: dynamic bicycle equations in `dynamics.py`
@@ -757,3 +757,60 @@ Parts F to H are committed (`6ee97ef`, `a756e55`) and `pixi run test` gives
   Q-A3 sur la figure, la case du README, le commit et `git tag step-2`.
 
 **Next.**
+
+---
+
+## 2026-10-09 - plan - hardware target: RTX 4000 Ada instead of Jetson
+
+**Goal.** Drop the Jetson Orin Nano: its price (RAM costs) is not justified by
+what it adds to the project. Retarget the plan to the GPU node of the cluster.
+
+**Done.** `README.md` and `docs/*` rewritten for an NVIDIA RTX 4000 Ada
+Generation (AD104, compute capability 8.9, 48 SMs, 20 GB GDDR6, PCIe 4.0 x16,
+130 W). Step 5 becomes a real-time closed loop with simulator and controller in
+two processes on the node; the Jetson-specific work (unified memory,
+`nvpmodel`) is replaced by discrete-GPU work: pinned / mapped / managed memory
+for the tiny per-iteration transfers, CUDA Graphs, reduced compute budget
+(power limit, clock lock or SM share), jitter on a shared node. The RTX 3060 /
+Orin comparison of step 6 becomes NumPy vs C++ CPU vs CUDA, full and throttled.
+Entries above this one are left as they were written.
+
+**Measured.**
+
+**No effect / reverted.**
+
+Also: `CMAKE_CUDA_ARCHITECTURES 89` in `CMakeLists.txt`, `linux-aarch64`
+dropped from `pixi.toml` (lockfile regenerated), Orin column removed from
+`bench/results.md`. Clean rebuild compiles for sm_89.
+
+**Next.** Run `hello_cuda` on the cluster node to confirm the sm_89 binary.
+
+---
+
+## 2026-10-09 - tooling - MPPI videos and README media
+
+**Goal.** Show how MPPI works, not only the path it drives: a video of single
+iterations (rollouts, scores, weighted mean, applied control), inside a lap.
+
+**Done.** `python/video_mppi.py`. From a state x_k of a saved trajectory it
+recomputes the iterations (`run_sim.py` keeps no rollout on disk), with U
+warm-started from the controls actually applied, `control[k:k+T]`: faithful in
+shape, not bit for bit. Each cycle: K rollouts growing in gray, colored by cost
+rank, `U*` rolled out, first control applied. `--lap` plays the whole lap
+around it: real time, slowdown and zoom in to x_k (s(u) = k - L(1-u)^2, same
+speed at the junction), cycles on the saved run, zoom out, real time. Defaults
+to the step at 12 m, the beam of `step2_*_trajectory.png`. Pixi tasks
+`video-mppi`, `video-lap`, `media`. `docs/media/` (versioned, gitignore
+exception) holds the README GIF and MP4. `python/tests/test_video.py` covers the
+geometry and timing helpers.
+
+**Measured.** Rendering about 1.5 min for the default lap video (759 frames at
+30 fps, 25 s). GIF through ffmpeg palette, 800 px, 15 fps: 4.4 MB (pillow at
+the same settings: 6.5 MB, coarser).
+
+**No effect / reverted.** A first version jumped up to two steps where the real
+time part hands over to the slowdown (`np.arange` stopped short of k - L);
+caught by `test_lap_timeline_is_continuous`, fixed.
+
+**Next.** Regenerate `docs/media/` with `pixi run media` whenever the
+step-2 trajectory changes.

@@ -35,6 +35,9 @@ compile_commands.json
 *.pdf
 *.gif
 results/
+# Figures et vidéos publiées dans le README et les docs : versionnées
+!docs/media/
+!docs/media/**
 # results/*
 # !results/track/
 # results/track/*

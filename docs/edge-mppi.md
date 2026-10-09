@@ -1,4 +1,4 @@
-# MPPI accéléré GPU sur cible embarquée — Jalon 1
+# MPPI accéléré GPU en temps réel — Jalon 1
 
 **Arthur Fournier — septembre 2026**
 
@@ -6,21 +6,21 @@
 
 ## 1. Phrase de positionnement
 
-> Contrôle prédictif temps réel accéléré GPU sur cible embarquée.
+> Contrôle prédictif temps réel accéléré GPU, sous budget de latence strict.
 
-Cette phrase est la boussole du projet. Chaque décision technique se juge par rapport à elle : si une option ne sert ni le temps réel, ni l'accélération GPU, ni la contrainte embarquée, elle sort du périmètre.
+Cette phrase est la boussole du projet. Chaque décision technique se juge par rapport à elle : si une option ne sert ni le temps réel, ni l'accélération GPU, ni le respect du budget de latence, elle sort du périmètre.
 
 ## 2. Objectif
 
-Implémenter un contrôleur MPPI (Model Predictive Path Integral) pour un véhicule de type voiture, l'accélérer par un kernel CUDA écrit à la main, et le déployer sur un NVIDIA Jetson Orin Nano en tenant un budget temps réel strict.
+Implémenter un contrôleur MPPI (Model Predictive Path Integral) pour un véhicule de type voiture, l'accélérer par un kernel CUDA écrit à la main, et le faire tourner sur une NVIDIA RTX 4000 Ada Generation (nœud GPU du cluster) en tenant un budget temps réel strict.
 
 Le projet vise trois compétences que mon parcours ne couvre pas encore :
 
 - **Contrôle robotique** — MPPI, dynamique véhicule, conception de fonction de coût
 - **Programmation GPU bas niveau** — CUDA C++, profiling Nsight, optimisation mémoire
-- **Déploiement embarqué** — cible ARM + GPU contraint, budget de latence, enveloppe de puissance
+- **Ingénierie temps réel** — budget de latence, gigue (p99), transferts CPU↔GPU, budget de calcul et de puissance limité
 
-Ces trois axes se recoupent exactement avec le périmètre des équipes de robotique embarquée (NVIDIA Isaac, Wayve, Waabi, ANYbotics).
+Ces trois axes se recoupent exactement avec le périmètre des équipes de robotique et de conduite autonome (NVIDIA Isaac, Wayve, Waabi, ANYbotics).
 
 ## 3. Pourquoi MPPI
 
@@ -29,7 +29,7 @@ MPPI est un algorithme d'optimisation en ligne. À chaque pas de temps, il écha
 Trois propriétés le rendent idéal ici :
 
 - **Parallélisme massif et irrégulier.** Les rollouts sont indépendants entre eux mais séquentiels dans le temps. Ni cuBLAS ni PyTorch n'exploitent bien ce motif — c'est précisément le cas où écrire un kernel à la main apporte un gain réel et mesurable.
-- **État de petite dimension.** 4 à 6 variables selon le modèle, donc des milliers de trajectoires tiennent dans le budget temps réel d'une carte embarquée.
+- **État de petite dimension.** 4 à 6 variables selon le modèle, donc des milliers de trajectoires tiennent dans un budget temps réel de 20 ms sur un seul GPU.
 - **Origine automobile.** L'algorithme vient du projet AutoRally (Georgia Tech), conçu pour du pilotage agressif de voiture RC. Le cas d'usage est directement lisible par le secteur de la conduite autonome.
 
 **MPPI ne s'entraîne pas.** Aucun dataset n'est nécessaire : la dynamique est écrite à la main, l'environnement est généré, tout est produit en interne au projet.
@@ -41,13 +41,14 @@ Trois propriétés le rendent idéal ici :
 - Modèle bicycle cinématique puis dynamique (avec modèle de pneu)
 - Implémentation MPPI de référence en Python/NumPy
 - Kernel CUDA fusionné, optimisé et profilé
-- Déploiement sur Jetson Orin Nano en hardware-in-the-loop
+- Boucle fermée temps réel sur le GPU du cluster, simulateur et contrôleur dans deux processus séparés
 - Caractérisation systématique latence / qualité de contrôle
 - Comparaison avec une baseline externe de qualité production
 
 ### Hors périmètre
 
-- **Aucun robot physique.** Le Jetson est utilisé comme *cible de calcul embarquée*, pas comme cerveau de robot. La simulation tourne sur le PC de développement, le contrôleur sur le Jetson, les deux en boucle fermée via Ethernet. C'est du hardware-in-the-loop, la pratique standard avant tout déploiement réel.
+- **Aucun robot physique.** La RTX 4000 Ada est une *cible de calcul*, pas le cerveau d'un robot. Le simulateur et le contrôleur tournent dans deux processus distincts sur le nœud GPU, reliés par un socket, en boucle fermée. L'interface est celle qu'aurait un contrôleur embarqué : remplacer le socket local par un lien réseau vers une autre machine ne change pas le code.
+- **Aucune carte embarquée.** Un Jetson n'apporte pas assez au projet pour justifier son prix. Le code reste du CUDA standard : un portage ultérieur se limiterait à ajouter son architecture (`sm_87` pour un Orin) à `CMAKE_CUDA_ARCHITECTURES`, recompiler sur la carte et refaire les mesures. Extension possible, pas un objectif.
 - **Aucun apprentissage.** Pas de réseau de neurones, pas de RL. Ces éléments arrivent aux jalons suivants.
 
 ### Le mot « dynamique » — clarification
@@ -69,8 +70,9 @@ Deux sens différents circulent et il faut les tenir séparés :
 | Horizon T | 50 pas |
 | Pas de temps dt | 20 ms |
 | **Budget de latence** | **< 20 ms par itération de contrôle** |
-| Cible matérielle | Jetson Orin Nano Super 8 Go |
-| Machine de développement | PC Ubuntu + RTX 3060 (architecture Ampere, comme le Jetson) |
+| Cible matérielle | NVIDIA RTX 4000 Ada Generation : AD104, compute capability 8.9, 48 SM, 20 Go GDDR6, PCIe 4.0 x16, 130 W |
+| Machine d'exécution | Nœud GPU du cluster, accès par SSH (VS Code Remote-SSH) |
+| Machine de développement | PC sous WSL2 sans GPU : édition et compilation seulement |
 
 Le budget de 20 ms est le critère central du projet. Toute optimisation se mesure par rapport à lui.
 
@@ -179,19 +181,21 @@ Dans l'ordre de rentabilité :
 
 ---
 
-### Étape 5 — Déploiement Jetson *(3-4 jours)*
+### Étape 5 — Boucle temps réel sur le GPU du cluster *(3-4 jours)*
 
-Build **natif sur la carte**, pas de cross-compilation (économie de plusieurs heures).
+Build **natif sur le nœud GPU** (`pixi run build`), comme aux étapes 3 et 4.
 
-**Boucle hardware-in-the-loop.** Simulation sur le PC, contrôleur sur le Jetson, socket TCP, **simulation synchronisée sur le contrôleur** (pas de temps réel côté sim, on attend la réponse) — sinon les mesures ne veulent rien dire.
+**Boucle fermée à deux processus.** Simulateur (Python) et contrôleur (C++/CUDA) dans deux processus séparés, reliés par un socket (TCP sur `localhost` ou socket Unix). **Simulation synchronisée sur le contrôleur** (pas de temps réel côté sim, on attend la réponse) — sinon les mesures ne veulent rien dire. Le contrôleur ne voit que des messages état → commande, comme sur un vrai véhicule.
 
-**Spécificités Jetson à exploiter.**
-- La mémoire est **physiquement unifiée** : CPU et GPU partagent le même pool LPDDR5. `cudaHostAlloc` en mode mapped ou la mémoire managée élimine de vraies copies. Mesurer la différence — c'est un point que peu de gens connaissent, et il n'existe pas sur la RTX 3060.
-- `nvpmodel` pour basculer entre 7 W / 15 W / 25 W / MAXN, `jetson_clocks`, surveillance par `tegrastats`.
+**Spécificités d'un GPU discret à exploiter.**
+- CPU et GPU ont des **mémoires séparées**, reliées par PCIe 4.0. À chaque itération, l'état (24 octets) monte et la commande (8 octets) descend : c'est la **latence** d'un transfert qui compte, pas le débit. Comparer mémoire paginable, mémoire épinglée (`cudaMallocHost` + `cudaMemcpyAsync`), mémoire épinglée mappée (*zero-copy* à travers le PCIe, `cudaHostAlloc(..., cudaHostAllocMapped)`) et mémoire managée. Mesurer la différence.
+- **Coût de lancement.** Plusieurs kernels par itération (rollouts, réduction, mise à jour) : chaque lancement coûte quelques microsecondes côté CPU. Capturer l'itération dans un **CUDA Graph** et mesurer le gain.
+- **Budget de calcul réduit.** Pour savoir ce que deviendrait le contrôleur sur un matériel plus modeste, restreindre les ressources : limite de puissance (`nvidia-smi -pl`) et verrouillage des fréquences (`nvidia-smi -lgc`) si les admins du cluster le permettent (droits root), sinon fraction des SM via MPS (`CUDA_MPS_ACTIVE_THREAD_PERCENTAGE`) ou *green contexts* (CUDA ≥ 12.4). Surveillance : `nvidia-smi --query-gpu=power.draw,clocks.sm,temperature.gpu --format=csv -lms 100`.
+- **Nœud partagé.** D'autres jobs sur le même nœud (CPU ou GPU) font exploser la p99. Réserver le GPU en exclusivité via l'ordonnanceur du cluster, fixer le processus contrôleur sur un cœur (`taskset`), et noter dans le journal ce qui tournait à côté pendant chaque mesure.
 
-**Mesure de latence côté Jetson uniquement**, avec des events CUDA, jamais un chronomètre incluant le réseau.
+**Mesure de latence côté contrôleur uniquement**, avec des events CUDA pour le GPU et `std::chrono::steady_clock` pour l'itération complète, jamais un chronomètre incluant le socket.
 
-**Critère de sortie :** tour de circuit complet en HIL, budget de 20 ms tenu à K = 8192, T = 50, modèle dynamique. En cas d'échec, savoir exactement quel paramètre réduire et de combien.
+**Critère de sortie :** tour de circuit complet en boucle fermée à deux processus, budget de 20 ms tenu (p99) à K = 8192, T = 50, modèle dynamique. Puis le plus grand K qui tient le budget sous la configuration la plus restreinte testée (puissance minimale ou fraction de SM). En cas d'échec, savoir exactement quel paramètre réduire et de combien.
 
 ---
 
@@ -199,9 +203,9 @@ Build **natif sur la carte**, pas de cross-compilation (économie de plusieurs h
 
 Ce qui transforme le projet en artefact citable.
 
-**Balayages de latence.** En fonction de K (256 → 32768), de T, du modèle (cinématique vs dynamique), du mode de puissance. **p50 et p99, pas seulement la moyenne** — le jitter compte autant que le temps moyen en temps réel.
+**Balayages de latence.** En fonction de K (256 → 32768), de T, du modèle (cinématique vs dynamique), du budget de calcul (limite de puissance ou fraction de SM). **p50 et p99, pas seulement la moyenne** — le jitter compte autant que le temps moyen en temps réel.
 
-**Comparaison inter-plateformes.** Mêmes optimisations sur RTX 3060 et sur Orin Nano. Les gains diffèrent (rapport calcul/bande passante, nombre de SM, mémoire unifiée) : c'est un résultat, pas un problème.
+**Comparaison inter-plateformes.** Même algorithme en NumPy, en C++ sur CPU (le backend de référence de l'étape 3) et en CUDA sur la RTX 4000 Ada, puis la RTX 4000 Ada bridée (puissance, fraction de SM). Les gains diffèrent selon K (rapport calcul/bande passante, nombre de SM occupés, coût fixe des transferts et des lancements) : c'est un résultat, pas un problème.
 
 **Métriques de contrôle.** Temps au tour, erreur latérale RMS, taux de succès sur 50 essais avec obstacles aléatoires.
 
@@ -244,7 +248,7 @@ C'est la comparaison qui a du poids : « X fois plus rapide que mon NumPy » ne 
 Le jalon 1 est autonome et se suffit à lui-même. Les jalons suivants réutilisent la plateforme, le harnais d'évaluation et le pipeline de déploiement :
 
 - **Jalon 2** — remplacer la dynamique analytique par un réseau appris (2-3 semaines)
-- **Jalon 3** — politique entraînée par RL en simulation parallèle, déployée sur la même cible (un semestre)
+- **Jalon 3** — politique entraînée par RL en simulation parallèle sur le GPU du cluster, évaluée sur la même boucle (un semestre)
 - **Jalon 4** — benchmark comparatif des trois approches sur la même tâche
 
 Détail complet dans le fichier `02_contexte_et_jalons.md`.

@@ -7,9 +7,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
-# 86 = RTX 3060 (dev machine), 87 = Jetson Orin (deployment target)
+# 89 = RTX 4000 Ada Generation (cluster GPU node)
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-set(CMAKE_CUDA_ARCHITECTURES 86 87)
+set(CMAKE_CUDA_ARCHITECTURES 89)
 endif()
 
 project(edge_mppi LANGUAGES CXX CUDA)
