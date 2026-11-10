@@ -32,16 +32,6 @@ configure = "cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release"
 build = { cmd = "cmake --build build", depends-on = ["configure"] }
 clean = "rm -rf build"
 
-# Latency sweep on the CUDA implementation
-bench = { cmd = "python bench/run_bench.py --config config/mppi.yaml", depends-on = [
-  "build",
-] }
-
-# Non-regression: per-trajectory costs, Python vs CUDA, on a fixed noise tensor
-check = { cmd = "python bench/check_parity.py --config config/mppi.yaml", depends-on = [
-  "build",
-] }
-
 # STEP 1
 track = "python python/generate_track.py --config config/mppi.yaml"
 test = { cmd = "pytest -q python/tests", env = { PYTHONPATH = "python" }, depends-on = ["track"] }
@@ -61,3 +51,11 @@ media = { cmd = "python python/video_mppi.py --config config/mppi.yaml --lap --o
 all = [{ task = "track" }, { task = "sim" }, { task = "sweep" }, { task = "compare" }, { task = "tires" }]
 # De manière équivalente : 
 # all = { depends-on = ["track", "sim", "sweep", "compare", "tires"] }
+
+# STEP 3
+check = { cmd = "python bench/check_parity.py --config config/mppi.yaml", env = { PYTHONPATH = "python" }, depends-on = ["build", "track"] }
+bench = { cmd = "python bench/run_bench.py --config config/mppi.yaml", env = { PYTHONPATH = "python" }, depends-on = ["build", "track"] }
+sim-cuda = { cmd = "python python/run_sim_cuda.py --config config/mppi.yaml", env = { PYTHONPATH = "python" }, depends-on = ["build", "track"] }
+# Exercices de la partie A (hors CMake, compilés à la main). `pixi run ex1 -DNO_GUARD` pour un bug
+ex1 = { cmd = "mkdir -p build && nvcc -std=c++17 -arch=sm_89 -Icuda/include {{ flags }} -o build/ex1 cuda/exercices/ex1_saxpy.cu && ./build/ex1", args = [{ arg = "flags", default = "" }] }
+ex2 = "mkdir -p build && nvcc -std=c++17 -arch=sm_89 -Icuda/include -o build/ex2 cuda/exercices/ex2_decay.cu && ./build/ex2"
